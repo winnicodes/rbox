@@ -158,6 +158,11 @@ If you like rbox, you can [buy me a coffee](https://ko-fi.com/winnicodes).
 
 ---
 
+## 📄 License
+
+[GPL-3.0](LICENSE). rbox ships a GPL build of ffmpeg, so the GPL covers the
+combined work - see below.
+
 ## 🎬 Built with ffmpeg
 
 rbox does not implement any capture, encoding or muxing of its own. **All
