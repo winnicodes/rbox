@@ -1,0 +1,42 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Personal scratch notes, not part of the project
+/ToDo
+
+# tsconfig.node.json is a composite project, so `tsc -b` drops one of these
+*.tsbuildinfo
+
+# Secrets. Vite exposes anything prefixed VITE_ to the bundle.
+.env
+.env.*
+!.env.example
+
+# Editor directories and files
+.vscode/
+.idea
+.DS_Store
+Thumbs.db
+desktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ffmpeg sidecar (fetched by scripts/fetch-ffmpeg.mjs)
+src-tauri/binaries/
+
+# Rust build output and Tauri's generated schemas are covered by
+# src-tauri/.gitignore (/target, /gen/schemas).

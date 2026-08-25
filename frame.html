@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <title>rbox recording frame</title>
+    <style>
+      /* No framework here on purpose: this window is a red ring and nothing
+         else. The ring is drawn in the margin OUTSIDE the recorded region, so
+         gdigrab never captures it. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+      }
+      .ring {
+        position: fixed;
+        inset: 0;
+        box-sizing: border-box;
+        border: 3px solid #ef4444;
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          border-color: #ef4444;
+        }
+        50% {
+          border-color: #fca5a5;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .ring {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="ring"></div>
+  </body>
+</html>
