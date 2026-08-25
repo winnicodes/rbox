@@ -1,12 +1,6 @@
 <div align="center">
 
-<img src="docs/media/hero.svg" alt="rbox - minimal screen recorder" width="820">
-
-<br>
-
-**Drag a frame. Hit record.**
-
-Region screen recorder for Windows. Frame an area to the pixel, save it as MP4, GIF or PNG.
+<img src="docs/media/rbox-promo-1.png" alt="rbox - Drag a frame. Hit record. Region screen recorder for Windows: frame an area to the pixel, save it as MP4, GIF or PNG." width="900">
 
 <br>
 
@@ -58,17 +52,11 @@ lets you snap to 1080p, 720p or square, go full screen, or type exact numbers.
 ## 🖼️ Screenshots
 
 <div align="center">
-  <img src="docs/media/panel.png" alt="The rbox panel with an area selected" width="400">
-  <img src="docs/media/settings.png" alt="Settings: frame rate, quality, audio and output folder" width="400">
+  <img src="docs/media/rbox-promo-2.png" alt="The whole app: the main panel, the settings page, and the bar the panel shrinks to while recording." width="900">
 </div>
 
-<div align="center">
-  <img src="docs/media/overlay.png" alt="The selection overlay with its toolbar" width="700">
-  <br>
-  <img src="docs/media/recording.png" alt="The recording bar with elapsed time" width="260">
-  <br>
-  <sub>While recording, the panel shrinks to this bar - drag it out of your way.</sub>
-</div>
+That is the entire app. One panel, one settings page, and a small bar while it
+records.
 
 <a id="install"></a>
 
