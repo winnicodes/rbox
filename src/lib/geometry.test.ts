@@ -8,6 +8,7 @@ import {
   monitorOfRect,
   physicalToCss,
   rectFromPoints,
+  startupRect,
   virtualBounds,
   type MonitorInfo,
 } from "./geometry.ts";
@@ -92,4 +93,72 @@ test("an area whose monitor is gone reports back as unusable", () => {
 test("an empty monitor list means unknown, not gone", () => {
   const r = { x: 10, y: 10, w: 100, h: 100 };
   assert.deepEqual(fitRectToMonitors(r, []), r);
+});
+
+// --- startupRect -----------------------------------------------------------
+
+test("an area whose display is still there survives a restart untouched", () => {
+  const r = { x: -1000, y: 200, w: 800, h: 600 };
+  assert.deepEqual(startupRect(r, "left-hidpi", monitors), {
+    rect: r,
+    monitorName: "left-hidpi",
+  });
+});
+
+test("a missing display gives up the position but keeps the size", () => {
+  // The hidpi screen on the left is unplugged. Its old coordinates are negative
+  // and would now point at nothing, so the area moves to the first monitor.
+  const onlyPrimary = monitors.filter((m) => m.name === "primary");
+  const { rect, monitorName } = startupRect(
+    { x: -1000, y: 200, w: 800, h: 600 },
+    "left-hidpi",
+    onlyPrimary,
+  );
+  assert.equal(monitorName, "primary");
+  assert.ok(rect);
+  assert.equal(rect.w, 800);
+  assert.equal(rect.h, 600);
+  assert.deepEqual(rect, centeredRect(800, 600, onlyPrimary[0]));
+});
+
+test("an area larger than the first monitor is shrunk onto it", () => {
+  const small: MonitorInfo[] = [{ name: "small", x: 0, y: 0, w: 1280, h: 720, scale: 1 }];
+  const { rect } = startupRect({ x: -1000, y: 0, w: 2560, h: 1440 }, "left-hidpi", small);
+  assert.deepEqual(rect, { x: 0, y: 0, w: 1280, h: 720 });
+});
+
+test("a known display whose area drifted off screen still moves to the first", () => {
+  // Same monitor name, but the layout shrank underneath it.
+  const shrunk: MonitorInfo[] = [{ name: "primary", x: 0, y: 0, w: 1920, h: 1080, scale: 1 }];
+  const { rect, monitorName } = startupRect({ x: 4000, y: 0, w: 400, h: 300 }, "primary", shrunk);
+  assert.equal(monitorName, "primary");
+  assert.ok(rect);
+  // Clamped back on, not centred — the display it names is still present.
+  assert.ok(rect.x + rect.w <= 1920);
+});
+
+test("no monitor list means unknown, so nothing is moved", () => {
+  const r = { x: 10, y: 10, w: 100, h: 100 };
+  assert.deepEqual(startupRect(r, "gone", []), { rect: r, monitorName: "gone" });
+});
+
+test("with nothing remembered the first monitor is the one selected", () => {
+  // The picker derives its value from the area, so without one there has to be
+  // a name to fall back on, or it opens showing no selection at all.
+  assert.deepEqual(startupRect(null, null, monitors), {
+    rect: null,
+    monitorName: "primary",
+  });
+});
+
+test("a remembered area without a monitor name gets the one it sits on", () => {
+  const r = { x: -1000, y: 200, w: 800, h: 600 };
+  assert.deepEqual(startupRect(r, null, monitors), {
+    rect: r,
+    monitorName: "left-hidpi",
+  });
+});
+
+test("no monitors and no area leaves both alone", () => {
+  assert.deepEqual(startupRect(null, null, []), { rect: null, monitorName: null });
 });

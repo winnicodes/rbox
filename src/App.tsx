@@ -76,6 +76,7 @@ import {
   evenRect,
   fitRectToMonitors,
   monitorOfRect,
+  startupRect,
   type MonitorInfo,
   type Rect,
 } from "@/lib/geometry";
@@ -202,6 +203,17 @@ export default function App() {
       const mons = await listMonitors().catch(() => []);
       setMonitors(mons);
       monitorsRef.current = mons;
+      // A preset is never active at startup — it is a choice for this session,
+      // and recording with yesterday's settings without saying so is a
+      // surprise. The remembered area does survive; startupRect only gives up
+      // its position when the display it lived on is gone. Not routed through
+      // update(), because syncActivePreset() would write the repaired area
+      // straight back into the preset we are deselecting.
+      setSettings((prev) => ({
+        ...prev,
+        activePreset: null,
+        ...startupRect(prev.rect, prev.monitorName, mons),
+      }));
       setAudioDevices(await listAudioDevices().catch(() => []));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -597,7 +609,7 @@ export default function App() {
               variant="ghost"
               size="icon-lg"
               aria-label="Back"
-              className="-ml-2 rounded-[10px]"
+              className="-ml-2 rounded-[10px] text-muted-foreground"
               onClick={() => setView("main")}
             >
               <ChevronLeftIcon className="size-4.5" />
@@ -902,7 +914,7 @@ function Links({ appVersion, updateUrl }: { appVersion: string; updateUrl: strin
         className="group relative flex shrink-0 items-center gap-2.5 rounded-[10px] outline-none hover:text-foreground focus-visible:text-foreground"
       >
         <CoffeeIcon className="size-4" />
-        Support me
+        Buy me a coffee
         <Tip>Ko-fi</Tip>
       </button>
     </div>

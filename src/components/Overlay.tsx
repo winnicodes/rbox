@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { emitTo } from "@tauri-apps/api/event";
 import {
   ArrowDownUpIcon,
@@ -98,6 +98,12 @@ export default function Overlay() {
    * origin every CSS coordinate in here is measured from. */
   const [bounds, setBounds] = useState<Rect | null>(null);
   const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
+  /**
+   * The screen the user is actually looking at — the one the pointer was on
+   * when the overlay opened. The overlay itself spans every monitor, so its
+   * centre is the seam between them; anything meant to be seen goes here.
+   */
+  const [home, setHome] = useState<MonitorInfo | null>(null);
   const [dpr, setDpr] = useState(window.devicePixelRatio || 1);
   const [rect, setRect] = useState<Rect | null>(null);
   const [mode, setMode] = useState<Mode>("presets");
@@ -112,16 +118,19 @@ export default function Overlay() {
   useEffect(() => {
     (async () => {
       const win = getCurrentWindow();
-      const [pos, size, mons] = await Promise.all([
+      const [pos, size, mons, cursor] = await Promise.all([
         win.outerPosition(),
         win.innerSize(),
         listMonitors(),
+        // Physical pixels, same space as the monitors — no conversion needed.
+        cursorPosition().catch(() => null),
       ]);
 
       // The window's real geometry is the ground truth, not what we asked for.
       const b: Rect = { x: pos.x, y: pos.y, w: size.width, h: size.height };
       setBounds(b);
       setMonitors(mons);
+      setHome(cursor ? (monitorOfRect(mons, { x: cursor.x, y: cursor.y, w: 1, h: 1 }) ?? null) : null);
       setDpr(window.devicePixelRatio || 1);
 
       // Reopening the overlay picks up the saved region instead of starting
@@ -260,6 +269,10 @@ export default function Overlay() {
   const css = rect ? physicalToCss(rect, bounds, dpr) : null;
   const viewW = bounds.w / dpr;
   const viewH = bounds.h / dpr;
+  // Hints belong on one screen, not spread across the whole virtual desktop —
+  // its centre falls between the monitors. Falls back to the full overlay when
+  // the pointer's monitor is unknown (single screen, or cursorPosition failed).
+  const hintBox = home ? physicalToCss(home, bounds, dpr) : { x: 0, y: 0, w: viewW, h: viewH };
 
   // Toolbar hangs off the selection, under it by default and flipped above when
   // it would leave the screen. Its size is measured rather than hard-coded —
@@ -291,9 +304,12 @@ export default function Overlay() {
     if (ratio) setRatio(null);
     else if (rect) setRatio(rect.w / rect.h);
   }
-  /** The monitor the selection sits on, or the one the overlay starts at. */
+  /** The monitor the selection sits on, or the one the pointer came from. */
   function currentMonitor() {
-    return monitorOfRect(monitors, rect ?? { ...bounds!, w: 1, h: 1 });
+    if (rect) return monitorOfRect(monitors, rect);
+    // Without `home` this would fall back to the top-left corner of the virtual
+    // desktop, i.e. the leftmost screen rather than the one being used.
+    return home ?? monitorOfRect(monitors, { ...bounds!, w: 1, h: 1 });
   }
   function applyPreset(w: number, h: number) {
     const mon = currentMonitor();
@@ -439,7 +455,10 @@ export default function Overlay() {
       </div>
 
       {!rect && !dragging && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div
+          className="pointer-events-none absolute flex items-center justify-center"
+          style={{ left: hintBox.x, top: hintBox.y, width: hintBox.w, height: hintBox.h }}
+        >
           <div className="flex flex-col items-center gap-3 text-center">
             <span className="text-xl font-semibold text-white">
               Drag a frame around what you want
@@ -488,8 +507,13 @@ export default function Overlay() {
       )}
 
       <div
-        className="pointer-events-none absolute right-0 left-0 flex justify-center text-[13px] text-white/55"
-        style={{ bottom: 14, width: viewW }}
+        className="pointer-events-none absolute flex justify-center text-[13px] text-white/55"
+        style={{
+          left: hintBox.x,
+          width: hintBox.w,
+          // 14 px above that monitor's bottom edge, not the desktop's.
+          bottom: viewH - (hintBox.y + hintBox.h) + 14,
+        }}
       >
         Arrow keys nudge · Shift for 10 px · Esc cancels
       </div>

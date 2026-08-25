@@ -108,6 +108,41 @@ export function rectFromPoints(ax: number, ay: number, bx: number, by: number): 
  * more — the caller then keeps whatever area is selected instead of silently
  * recording somewhere else.
  */
+/**
+ * The area and display the app should start on.
+ *
+ * A remembered area keeps its exact place for as long as that is possible —
+ * that is the point of remembering it. Only when the display it lived on is
+ * gone does the position get given up, and even then the size survives: the
+ * area moves to the first screen instead of to wherever its old coordinates
+ * happen to land now.
+ *
+ * With nothing remembered there is still a display to name, and it is the first
+ * one. The picker would otherwise open on no selection at all.
+ */
+export function startupRect(
+  r: Rect | null,
+  monitorName: string | null,
+  monitors: MonitorInfo[],
+): { rect: Rect | null; monitorName: string | null } {
+  // No monitor list means "unknown", so change nothing.
+  if (monitors.length === 0) return { rect: r, monitorName };
+  const first = monitors[0];
+  if (!r) return { rect: null, monitorName: first.name };
+
+  // A null name predates the monitor being recorded; judge it by geometry only.
+  const sameScreen = monitorName === null || monitors.some((m) => m.name === monitorName);
+  const fitted = sameScreen ? fitRectToMonitors(r, monitors) : null;
+  // A name is filled in from the area itself, never from the first monitor —
+  // that would label an area on the second screen with the first one's name.
+  if (fitted) return { rect: fitted, monitorName: monitorName ?? monitorOfRect(monitors, fitted)?.name ?? null };
+
+  return {
+    rect: evenRect(centeredRect(Math.min(r.w, first.w), Math.min(r.h, first.h), first)),
+    monitorName: first.name,
+  };
+}
+
 export function fitRectToMonitors(r: Rect, monitors: MonitorInfo[]): Rect | null {
   // No monitor list means "unknown", not "no screens".
   if (monitors.length === 0) return r;
