@@ -82,6 +82,8 @@
       ]
     },
     "shell:allow-stdin-write",
-    "shell:allow-kill"
+    "shell:allow-kill",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister"
   ]
 }

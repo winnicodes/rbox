@@ -16,7 +16,10 @@ export type Settings = {
   /** Record what the machine plays, captured via WASAPI loopback. */
   systemAudio: boolean;
   gifFps: number;
+  /** Max GIF width in px; 0 = original size. */
   gifWidth: number;
+  /** Print Screen opens the area picker. App-wide, not part of a preset. */
+  printScreen: boolean;
   presets: Preset[];
   /** Name of the selected preset, or null. */
   activePreset: string | null;
@@ -66,6 +69,7 @@ export const DEFAULTS: Settings = {
   systemAudio: true,
   gifFps: 15,
   gifWidth: 640,
+  printScreen: false,
   presets: [],
   activePreset: null,
 };

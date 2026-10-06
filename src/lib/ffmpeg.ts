@@ -208,7 +208,8 @@ export async function toGif(
   fps = 15,
   width = 640,
 ): Promise<void> {
-  const filter = `fps=${fps},scale=${width}:-1:flags=lanczos`;
+  // Only ever shrinks: a region narrower than `width` keeps its size. 0 = original.
+  const filter = width ? `fps=${fps},scale='min(iw,${width})':-1:flags=lanczos` : `fps=${fps}`;
 
   const pass1 = await run([
     "-hide_banner", "-i", mp4Path, "-vf", `${filter},palettegen=stats_mode=diff`, "-update", "1", "-y", palettePath,

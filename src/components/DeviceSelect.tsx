@@ -44,7 +44,7 @@ export default function DeviceSelect({ devices, selected, onToggle, disabled }: 
   const label = empty
     ? "No microphone"
     : selected.length === 0
-      ? "None selected"
+      ? "Off"
       : selected.length === 1
         ? shortDeviceName(selected[0])
         : `${selected.length} devices`;

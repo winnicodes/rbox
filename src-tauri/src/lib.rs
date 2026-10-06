@@ -64,6 +64,7 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }));
+        builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
     }
 
     let builder = builder

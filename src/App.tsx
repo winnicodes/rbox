@@ -6,10 +6,15 @@ import { getCurrentWindow, LogicalSize, type PhysicalPosition } from "@tauri-app
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { remove } from "@tauri-apps/plugin-fs";
+import {
+  register as registerShortcut,
+  unregister as unregisterShortcut,
+} from "@tauri-apps/plugin-global-shortcut";
 import { toast } from "sonner";
 import { isNewer } from "@/lib/version";
 import {
   ArrowUpCircleIcon,
+  CheckIcon,
   ChevronLeftIcon,
   CoffeeIcon,
   CropIcon,
@@ -17,7 +22,6 @@ import {
   EyeOffIcon,
   FilmIcon,
   FolderIcon,
-  FolderOpenIcon,
   ImageIcon,
   LoaderIcon,
   MicIcon,
@@ -45,7 +49,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import PresetTray, { PresetBanner } from "@/components/PresetTray";
-import Segmented from "@/components/Segmented";
+import Segmented, { SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "@/components/Segmented";
 import DeviceSelect, { shortDeviceName } from "@/components/DeviceSelect";
 
 import { cn } from "@/lib/utils";
@@ -94,6 +98,8 @@ const LOW_SPACE_BYTES = 500 * 1024 * 1024;
 
 /** The panel's fixed width. Its height follows the content — see fit(). */
 const WIDTH_MAIN = 480;
+/** Two columns of settings. */
+const WIDTH_SETTINGS = 620;
 
 /** Out-of-flow layers the window has to make room for. */
 const POPUPS = '[data-popup], [data-slot="select-content"]';
@@ -121,12 +127,17 @@ function formatDuration(ms: number): string {
   return `${m}:${s}`;
 }
 
+/** GIF width as shown to the user; 0 means the region's own width. */
+function gifSize(w: number): string {
+  return w ? `${w} px` : "Original";
+}
+
 /**
  * One line describing what a preset records — shown in the tray. It covers all
  * three formats, because the format itself is not part of a preset.
  */
 function presetSummary(p: Preset): string {
-  const how = `${p.fps} fps · ${QUALITY_LABELS[p.quality].toLowerCase()} · gif ${p.gifWidth} px`;
+  const how = `${p.fps} fps · ${QUALITY_LABELS[p.quality].toLowerCase()} · gif ${gifSize(p.gifWidth)}`;
   // A remembered area is the one thing that changes what gets recorded, so it
   // leads the line.
   return p.area ? `${p.area.rect.w} × ${p.area.rect.h} · ${how}` : how;
@@ -286,7 +297,8 @@ export default function App() {
   // Recording swaps the panel for a bar that sizes itself to REC, the timer
   // and the stop button.
   useEffect(() => {
-    widthRef.current = status === "recording" ? null : WIDTH_MAIN;
+    widthRef.current =
+      status === "recording" ? null : view === "settings" ? WIDTH_SETTINGS : WIDTH_MAIN;
     fitRef.current();
     // The bar is a window of its own to drag around; the panel should not
     // inherit wherever it was parked, so it goes back where it stood.
@@ -301,7 +313,7 @@ export default function App() {
       posBeforeBar.current = null;
       void win.setPosition(back).catch(() => {});
     }
-  }, [status]);
+  }, [status, view]);
 
   // Frame preview. Driven by an effect rather than by the click handler, so the
   // ring follows a region that changes after it was switched on. While
@@ -334,6 +346,27 @@ export default function App() {
       void un.then((f) => f());
     };
   }, [update]);
+
+  // Print Screen opens the area picker. Unregister waits for register, so a
+  // quick off-on-off cannot leave the key grabbed.
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  useEffect(() => {
+    if (!settings.printScreen) return;
+    const reg = registerShortcut("PrintScreen", (e) => {
+      if (e.state !== "Pressed" || statusRef.current !== "idle") return;
+      setPreview(false);
+      void openOverlay();
+    });
+    reg.catch((e) =>
+      toast.error("Print Screen is taken", {
+        description: `${e}. Turn off "Use the Print screen key to open screen capture" in Windows settings.`,
+      }),
+    );
+    return () => {
+      void reg.then(() => unregisterShortcut("PrintScreen")).catch(() => {});
+    };
+  }, [settings.printScreen]);
 
   // --- recording -----------------------------------------------------------
   const finish = useCallback(async (source: string) => {
@@ -597,7 +630,13 @@ export default function App() {
       className={cn("flex flex-col bg-background text-foreground", status === "recording" && "w-fit")}
     >
       {/* The OS title bar is off; this row is the whole window chrome. */}
-      <header data-tauri-drag-region className="flex h-14 items-center gap-2.5 px-4.5">
+      <header
+        data-tauri-drag-region
+        className={cn(
+          "flex h-14 items-center gap-2.5 px-4.5",
+          status === "idle" && view === "settings" && "border-b",
+        )}
+      >
         {status === "recording" ? (
           <span className="flex items-center gap-2.5 text-sm font-semibold text-destructive">
             <span className="size-2.5 animate-pulse rounded-full bg-destructive" />
@@ -663,6 +702,13 @@ export default function App() {
             </Button>
           ) : (
             <>
+              {/* Settings save on every change; this only says so. */}
+              {view === "settings" && (
+                <span className="flex items-center gap-1.25 pr-1.5 text-xs whitespace-nowrap text-muted-foreground/80">
+                  <CheckIcon className="size-3.25" />
+                  Saved
+                </span>
+              )}
               {view === "main" && (
                 <Button
                   variant="ghost"
@@ -706,7 +752,7 @@ export default function App() {
           <div className="flex flex-col gap-1">
             <span className="text-base font-semibold">Converting to GIF…</span>
             <span className="text-[13.5px] text-muted-foreground">
-              {settings.gifFps} fps · {settings.gifWidth} px wide
+              {settings.gifFps} fps · {gifSize(settings.gifWidth)}
             </span>
           </div>
           <span className="ml-auto text-[13.5px] text-muted-foreground">
@@ -720,10 +766,7 @@ export default function App() {
           defaultDir={defaultDir}
           appVersion={appVersion}
           updateUrl={updateUrl}
-          onSave={(patch) => {
-            update(patch);
-            setView("main");
-          }}
+          update={update}
         />
       ) : (
         <div className="flex flex-col gap-3.5 px-4.5 pb-4.5">
@@ -783,9 +826,9 @@ export default function App() {
                     <SelectTrigger className="h-auto w-fit gap-1 rounded-md border-0 bg-transparent p-0 text-xs text-muted-foreground hover:text-foreground dark:bg-transparent dark:hover:bg-transparent">
                       <MonitorIcon className="size-3.5" />
                       <SelectValue
-                        placeholder={monitors.length === 1 ? monitors[0].name : "Select monitor"}
+                        placeholder={monitors.length === 1 ? displayName(monitors[0].name) : "Select monitor"}
                       >
-                        {(name: string) => name}
+                        {displayName}
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent align="start" className="w-auto min-w-60 p-1">
@@ -802,7 +845,7 @@ export default function App() {
                   </Select>
                 )}
                 <span className="truncate font-mono">
-                  {rect ? `at ${rect.x}, ${rect.y}` : "Drag a frame anywhere on screen"}
+                  {rect ? `at ${rect.x}, ${rect.y}` : "No frame yet"}
                 </span>
               </div>
             </div>
@@ -882,10 +925,23 @@ export default function App() {
 }
 
 /** Project and support links — the same footer under both views. */
-function Links({ appVersion, updateUrl }: { appVersion: string; updateUrl: string | null }) {
+function Links({
+  appVersion,
+  updateUrl,
+  className,
+}: {
+  appVersion: string;
+  updateUrl: string | null;
+  className?: string;
+}) {
   // px-3.5 matches the meta bar, so the icons line up with the ones above.
   return (
-    <div className="flex items-center justify-between gap-3 px-3.5 text-[13px] text-muted-foreground">
+    <div
+      className={cn(
+        "flex items-center justify-between gap-3 px-3.5 text-[13px] text-muted-foreground",
+        className,
+      )}
+    >
       <div className="flex min-w-0 items-center gap-1.5">
         <button
           type="button"
@@ -934,9 +990,14 @@ function Tip({ children }: { children: string }) {
   );
 }
 
+/** "\\.\DISPLAY1" → "DISPLAY1". The full name stays the key; this is only for show. */
+function displayName(name: string): string {
+  return name.replace(/^\\\\\.\\/, "");
+}
+
 /** Display name with its resolution, the same in the list and the trigger. */
 function monitorLabel(m: MonitorInfo): string {
-  return `${m.name} · ${m.w}×${m.h}`;
+  return `${displayName(m.name)} · ${m.w}×${m.h}`;
 }
 
 /**
@@ -1036,36 +1097,146 @@ function FormatChip({
   );
 }
 
-/** A settings row. `tall` gives a subline room without cramping the label. */
-function Row({
+/** Small uppercase heading over a settings group. */
+function Group({ children }: { children: string }) {
+  return (
+    <h2 className="text-[11px] font-semibold tracking-[0.08em] text-muted-foreground/80 uppercase">
+      {children}
+    </h2>
+  );
+}
+
+/** One setting: label over its control, or with `inline` label left, control right. */
+function Field({
   label,
   sub,
+  inline,
   children,
-  tall,
 }: {
   label: string;
   sub?: string;
-  children?: React.ReactNode;
-  tall?: boolean;
+  inline?: boolean;
+  children: React.ReactNode;
 }) {
   return (
-    <div
-      className={
-        "flex items-center gap-3.5 rounded-xl bg-card px-4 " + (tall ? "h-16" : "h-14")
-      }
-    >
+    <div className={inline ? "flex items-center justify-between gap-3" : "flex flex-col gap-1.5"}>
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-[15px] font-medium">{label}</span>
-        {sub && <span className="truncate text-[13px] text-muted-foreground">{sub}</span>}
+        <span className="text-[13px] text-muted-foreground">{label}</span>
+        {sub && <span className="text-[11px] text-muted-foreground/70">{sub}</span>}
       </div>
-      <div className="ml-auto flex shrink-0 items-center gap-2">{children}</div>
+      {children}
     </div>
   );
 }
 
 /**
- * Everything that is set once and then forgotten. Edits stay local until
- * "Save", which commits them and returns to the main view.
+ * Fixed choices plus a custom slot at the end of the track: "…" until a value
+ * is typed, then that value with a pencil. Clicking the slot selects the typed
+ * value again, or edits it when it is already selected.
+ */
+function FpsPicker({
+  value,
+  choices,
+  max,
+  disabled,
+  onChange,
+}: {
+  value: number;
+  choices: number[];
+  max: number;
+  disabled?: boolean;
+  onChange: (v: number) => void;
+}) {
+  // Stays in its slot while a fixed choice is selected, one click away.
+  const [custom, setCustom] = useState<number | null>(null);
+  const [editing, setEditing] = useState(false);
+  const cancelled = useRef(false);
+  // A value from storage or a preset that is no fixed choice lands in the slot.
+  if (!choices.includes(value) && value !== custom) setCustom(value);
+  const isCustom = value === custom;
+
+  function finish(raw: string) {
+    setEditing(false);
+    // Empty or Esc: leave everything as it was.
+    if (cancelled.current || raw === "") return;
+    const n = Math.min(max, Math.max(1, Number.parseInt(raw, 10)));
+    setCustom(choices.includes(n) ? null : n);
+    onChange(n);
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Segmented
+        mono
+        value={editing || isCustom ? Number.NaN : value}
+        disabled={disabled}
+        onChange={onChange}
+        options={choices.map((f) => ({ value: f, label: String(f) }))}
+      >
+        {editing ? (
+          <label
+            className={cn(
+              SEGMENT,
+              "flex-[1.6] bg-background font-mono font-semibold ring-1 ring-foreground ring-inset",
+            )}
+          >
+            <input
+              autoFocus
+              inputMode="numeric"
+              defaultValue={custom ?? value}
+              onFocus={(e) => {
+                cancelled.current = false;
+                e.currentTarget.select();
+              }}
+              onChange={(e) => {
+                e.currentTarget.value = e.currentTarget.value.replace(/\D/g, "");
+              }}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                const el = e.currentTarget;
+                if (e.key === "Enter") el.blur();
+                if (e.key === "Escape") {
+                  cancelled.current = true;
+                  el.blur();
+                }
+                if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                  e.preventDefault();
+                  const n = (Number.parseInt(el.value, 10) || 0) + (e.key === "ArrowUp" ? 1 : -1);
+                  el.value = String(Math.min(max, Math.max(1, n)));
+                }
+              }}
+              onBlur={(e) => finish(e.currentTarget.value)}
+              className="w-[3ch] bg-transparent text-right outline-none"
+            />
+            <span className="font-normal text-muted-foreground">fps</span>
+          </label>
+        ) : (
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label="Custom frame rate"
+            onClick={() => (custom === null || isCustom ? setEditing(true) : onChange(custom))}
+            className={cn(
+              SEGMENT,
+              custom === null
+                ? "outline-1 -outline-offset-2 outline-muted-foreground/40 outline-dashed"
+                : "font-mono font-semibold tabular-nums",
+              isCustom ? SEGMENT_ON : SEGMENT_OFF,
+            )}
+          >
+            {custom ?? "…"}
+            {custom !== null && <PencilIcon className="size-2.5" />}
+          </button>
+        )}
+      </Segmented>
+      {editing && <span className="text-[11px] text-muted-foreground/70">1–{max} fps</span>}
+    </div>
+  );
+}
+
+/**
+ * Everything that is set once and then forgotten. Every change applies and
+ * persists at once — the header only reports that it did.
  */
 function SettingsPanel({
   settings,
@@ -1073,151 +1244,132 @@ function SettingsPanel({
   defaultDir,
   appVersion,
   updateUrl,
-  onSave,
+  update,
 }: {
   settings: Settings;
   audioDevices: string[];
   defaultDir: string;
   appVersion: string;
   updateUrl: string | null;
-  onSave: (patch: Partial<Settings>) => void;
+  update: (patch: Partial<Settings>) => void;
 }) {
-  const [draft, setDraft] = useState(settings);
-  const dirLabel = draft.outDir ?? defaultDir;
-
-  const patch = (p: Partial<Settings>) => setDraft((d) => ({ ...d, ...p }));
-  const dirty = JSON.stringify(draft) !== JSON.stringify(settings);
-  const isPng = draft.format === "png";
+  const dirLabel = settings.outDir ?? defaultDir;
+  const isPng = settings.format === "png";
 
   function toggleDevice(device: string, on: boolean) {
-    patch({
+    update({
       audioDevices: on
-        ? [...draft.audioDevices, device]
-        : draft.audioDevices.filter((d) => d !== device),
+        ? [...settings.audioDevices, device]
+        : settings.audioDevices.filter((d) => d !== device),
     });
   }
 
   async function pickFolder() {
     const picked = await openDialog({ directory: true, multiple: false });
-    if (typeof picked === "string") patch({ outDir: picked });
+    if (typeof picked === "string") update({ outDir: picked });
   }
 
   return (
-    <div className="flex flex-col gap-2 px-4.5 pb-4.5">
-      <Row label="Frame rate">
-        <Segmented
-          mono
-          value={draft.fps}
-          disabled={isPng}
-          onChange={(v) => patch({ fps: v })}
-          options={FPS_CHOICES.map((f) => ({ value: f, label: String(f) }))}
-        />
-      </Row>
-
-      <Row label="Quality">
-        <Segmented
-          value={draft.quality}
-          disabled={isPng}
-          onChange={(v) => patch({ quality: v as Settings["quality"] })}
-          options={Object.entries(QUALITY_LABELS).map(([value, label]) => ({
-            value: value as Settings["quality"],
-            label,
-          }))}
-        />
-      </Row>
-
-      {draft.format === "gif" && (
-        <>
-          <Row label="GIF frame rate">
-            <Segmented
-              mono
-              value={draft.gifFps}
-                  onChange={(v) => patch({ gifFps: v })}
-              options={[10, 15, 20, 25].map((f) => ({ value: f, label: String(f) }))}
+    <>
+      <div className="grid grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-3.5 border-r px-5 py-4.5">
+          <Group>Video</Group>
+          <Field label="Frame rate">
+            <FpsPicker
+              value={settings.fps}
+              choices={FPS_CHOICES}
+              max={120}
+              disabled={isPng}
+              onChange={(v) => update({ fps: v })}
             />
-          </Row>
-          <Row label="GIF width">
+          </Field>
+          <Field label="Quality">
+            <Segmented
+              value={settings.quality}
+              disabled={isPng}
+              onChange={(v) => update({ quality: v as Settings["quality"] })}
+              options={Object.entries(QUALITY_LABELS).map(([value, label]) => ({
+                value: value as Settings["quality"],
+                label,
+              }))}
+            />
+          </Field>
+
+          <div className="my-1 h-px bg-border" />
+          <Group>GIF</Group>
+          <Field label="Frame rate">
+            {/* GIF frame delays are whole centiseconds; players clamp above 50. */}
+            <FpsPicker
+              value={settings.gifFps}
+              choices={[10, 15, 20, 25]}
+              max={50}
+              onChange={(v) => update({ gifFps: v })}
+            />
+          </Field>
+          <Field inline label="Width">
             <Select
-              value={String(draft.gifWidth)}
-              onValueChange={(v) => v && patch({ gifWidth: Number(v) })}
-                >
-              <SelectTrigger className="h-11 rounded-[10px] font-mono text-sm">
-                <SelectValue />
+              value={String(settings.gifWidth)}
+              onValueChange={(v) => v && update({ gifWidth: Number(v) })}
+            >
+              <SelectTrigger size="sm" className="font-mono text-xs">
+                <SelectValue>{(v: string) => gifSize(Number(v))}</SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {[320, 480, 640, 800, 1024].map((w) => (
+                {[320, 480, 640, 800, 1024, 0].map((w) => (
                   <SelectItem key={w} value={String(w)}>
-                    {w} px
+                    {gifSize(w)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </Row>
-        </>
-      )}
+          </Field>
+        </div>
 
-      <Row label="System audio">
-        <Switch
-          checked={draft.systemAudio}
-          onCheckedChange={(v) => patch({ systemAudio: v })}
-          disabled={isPng}
-        />
-      </Row>
+        <div className="flex min-w-0 flex-col gap-3.5 px-5 py-4.5">
+          <Group>Audio</Group>
+          <Field inline label="System audio">
+            <Switch
+              checked={settings.systemAudio}
+              onCheckedChange={(v) => update({ systemAudio: v })}
+              disabled={isPng}
+            />
+          </Field>
+          <Field inline label="Microphone">
+            <DeviceSelect
+              devices={audioDevices}
+              selected={settings.audioDevices}
+              onToggle={toggleDevice}
+              disabled={isPng}
+            />
+          </Field>
 
-      <Row
-        tall
-        label="Microphone"
-        sub={
-          audioDevices.length === 0
-            ? "No microphone found"
-            : draft.audioDevices.length === 0
-              ? "Off"
-              : draft.audioDevices.map(shortDeviceName).join(", ")
-        }
-      >
-        <DeviceSelect
-          devices={audioDevices}
-          selected={draft.audioDevices}
-          onToggle={toggleDevice}
-          disabled={isPng}
-        />
-      </Row>
+          <div className="my-1 h-px bg-border" />
+          <Group>System</Group>
+          <Field label="Save to">
+            <button
+              type="button"
+              title="Change folder"
+              onClick={() => void pickFolder()}
+              className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-input px-2.5 py-1.5 font-mono text-xs text-foreground/75 transition-colors outline-none hover:bg-input/30 focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <span className="truncate">{dirLabel}</span>
+              <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            </button>
+          </Field>
+          <Field inline label="Print Screen key" sub="Opens area selection while rbox runs">
+            <Switch
+              checked={settings.printScreen}
+              onCheckedChange={(v) => update({ printScreen: v })}
+            />
+          </Field>
+        </div>
+      </div>
 
-      {/* Icons like the area card's actions — the labels live in the tooltip. */}
-      <Row tall label="Save to" sub={dirLabel}>
-        <Button
-          variant="ghost"
-          size="icon-lg"
-          aria-label="Change folder"
-          className="group relative size-9 rounded-[10px] text-muted-foreground"
-          onClick={() => void pickFolder()}
-        >
-          <PencilIcon className="size-4.5" />
-          <Tip>Change folder</Tip>
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-lg"
-          aria-label="Open folder"
-          className="group relative size-9 rounded-[10px] text-muted-foreground"
-          onClick={() =>
-            void openPath(dirLabel).catch(() => toast.error("Folder does not exist yet"))
-          }
-        >
-          <FolderOpenIcon className="size-4.5" />
-          <Tip>Open folder</Tip>
-        </Button>
-      </Row>
-
-      <Button
-        className="mt-1 h-12 w-full rounded-xl text-[15px] font-semibold"
-        disabled={!dirty}
-        onClick={() => onSave(draft)}
-      >
-        {dirty ? "Save" : "Saved"}
-      </Button>
-
-      <Links appVersion={appVersion} updateUrl={updateUrl} />
-    </div>
+      <Links
+        appVersion={appVersion}
+        updateUrl={updateUrl}
+        className="border-t px-5 pt-3 pb-3.5 text-xs"
+      />
+    </>
   );
 }
