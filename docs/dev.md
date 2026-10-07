@@ -7,6 +7,7 @@ want to record your screen, the [README](../README.md) is enough.
 - [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
 - [Windows and processes](#windows-and-processes)
+- [Print Screen, tray and screenshots](#print-screen-tray-and-screenshots)
 - [The coordinate rule](#the-coordinate-rule)
 - [Recording pipeline](#recording-pipeline)
 - [System audio](#system-audio)
@@ -16,6 +17,7 @@ want to record your screen, the [README](../README.md) is enough.
 - [Permissions](#permissions)
 - [Building installers](#building-installers)
 - [Tests](#tests)
+- [Promo images](#promo-images)
 - [Things that will bite you](#things-that-will-bite-you)
 - [Licensing](#licensing)
 
@@ -29,6 +31,7 @@ want to record your screen, the [README](../README.md) is enough.
 | Capture / encoding | ffmpeg, shipped as a Tauri sidecar |
 | System audio | cpal (WASAPI loopback) in Rust |
 | Settings | `localStorage` |
+| Tray, menus | Tauri tray + native menus, built from JS |
 
 There is no state library, no settings backend and no custom encoder. Those are
 deliberate omissions, not gaps waiting to be filled.
@@ -53,21 +56,23 @@ src/
     paths.ts            output folder and timestamped file names
     monitors.ts         monitor list from Tauri, in physical pixels
     overlayWindow.ts    creates the full-desktop selection window
-    frameWindow.ts      creates the red recording ring
+    frameWindow.ts      creates the red ring and the screenshot menu window
+    shotMenu.ts         native menu after a screenshot, menu icon helper
     appKeys.ts          blocks browser shortcuts inside the webview
     version.ts          version compare for the update hint
     events.ts           event names shared between windows
 src-tauri/
-  src/lib.rs            Tauri setup, plugins, free_space command
+  src/lib.rs            Tauri setup, plugins, tray icon, small commands
   src/loopback.rs       WASAPI loopback capture -> TCP -> ffmpeg
   capabilities/         Tauri permission set
   binaries/             ffmpeg sidecar (downloaded, git-ignored)
 scripts/
   fetch-ffmpeg.mjs      downloads the sidecar
   rename-installers.mjs post-build installer cleanup
+  promo/                renders the README images from the real UI
 index.html              main window
 overlay.html            selection overlay
-frame.html              recording ring (plain CSS, no framework)
+frame.html              ring, delay countdown, screenshot menu host
 ```
 
 Vite builds three HTML entry points (`main`, `overlay`, `frame`), configured in
@@ -106,22 +111,36 @@ on non-Windows platforms.
 
 ## Windows and processes
 
-rbox uses three webview windows and one child process.
+rbox uses four webview windows, a tray icon and one child process.
 
 | Window | File | Purpose |
 | --- | --- | --- |
 | `main` | `index.html` | The control panel. Owns all state. |
 | `overlay` | `overlay.html` | Transparent, spans the whole virtual desktop. Used to pick a region. |
-| `frame` | `frame.html` | Click-through red ring around the region while recording. |
+| `frame` | `frame.html` | Click-through red ring around the region while recording, or the delay countdown. |
+| `shotbar` | `frame.html?pick` | Invisible 1 px window at the pointer that opens the screenshot menu. |
 
-The overlay and the frame are created on demand from
+Everything but `main` is created on demand from
 [`overlayWindow.ts`](../src/lib/overlayWindow.ts) and
-[`frameWindow.ts`](../src/lib/frameWindow.ts), and closed when they are done.
-They talk back to `main` with two events only, defined in
+[`frameWindow.ts`](../src/lib/frameWindow.ts), and closed when it is done.
+They talk back to `main` with these events, defined in
 [`events.ts`](../src/lib/events.ts):
 
 - `rbox:region-picked` - payload is a `Rect`
 - `rbox:region-cancelled`
+- `rbox:quick-capture` - `{ rect, format }` from the quick overlay
+- `rbox:shot-action` - the screenshot menu pick: `copy`, `save`, `saveas`,
+  `open` or `close`
+
+**`main` starts hidden** (`visible: false` in `tauri.conf.json`). Rust shows it
+in `setup` unless the process was started with `--hidden`, which is what
+autostart passes, so a boot never flashes the window. Until monitors, settings
+and devices are loaded, `main` shows only the logo (`ready` in `App.tsx`).
+
+**X hides `main` to the tray**, it does not quit. Quitting is the tray's "Quit
+rbox", which finishes a running recording and then calls the `quit` command.
+Closing while recording (Alt+F4) still finishes the file first and destroys the
+window.
 
 The ring window is **larger than the recorded region** by the border width on
 every side, so the red line lives outside the captured rectangle and never shows
@@ -132,6 +151,45 @@ out of the region on scaled displays.
 Only one instance can run: `tauri-plugin-single-instance` focuses the existing
 window instead of starting a second recorder that would fight over the same
 output file.
+
+## Print Screen, tray and screenshots
+
+**Quick overlay.** Print Screen (a global shortcut, opt-in) and the tray entries
+open the overlay as `overlay.html?quick=<format>`. Quick mode starts blank
+instead of loading the saved region, and its toolbar carries Screenshot / Video
+/ GIF plus a Capture/Record button. Confirming **hides the overlay first, then
+emits** `rbox:quick-capture` - otherwise the dimmer ends up in the screenshot.
+`main` stores area and format and calls `start({ rect, format })`. The override
+argument exists because `update()` has not reached `localStorage` yet when
+`start()` reads it.
+
+If registering Print Screen fails (another app holds it), the setting is turned
+back off, so the switch never claims a key rbox does not have.
+
+**Tray.** Rust creates the icon (`TrayIconBuilder::with_id("main")`) and handles
+the left click. The right-click menu is set from `App.tsx` with
+`TrayIcon.getById("main").setMenu(...)`, so its entries call straight into the
+app and share its icons and, later, its translations.
+
+**Screenshot flow.**
+
+1. ffmpeg grabs one frame into a temp file (`tempShotPath()`).
+2. `showShotMenu()` opens the 1 px `shotbar` window at the pointer. A native
+   context menu needs a foreground window to belong to, and `main` may be in the
+   tray.
+3. [`shotMenu.ts`](../src/lib/shotMenu.ts) pops a Tauri `Menu` there. Its icons
+   are lucide icons rendered to PNG at runtime (`menuIcon()`).
+4. The pick goes to `main` as `rbox:shot-action`. Copy runs `copy_image` and
+   deletes the temp file; Save / Save to / Save and open use `move_file` (and
+   `open_with`); Close deletes it. Copy and Save shrink the 1 px window into a
+   short confirmation pill before it closes.
+
+Tauri reports no "menu closed without a pick". A dismissed menu leaves the 1 px
+window and the temp file behind until the next screenshot replaces both.
+
+**Delay.** With a delay set, the ring opens as `frame.html?count=<s>` and counts
+down inside the region. That number sits *in* the captured area, so the ring is
+closed before ffmpeg starts.
 
 ## The coordinate rule
 
@@ -199,10 +257,18 @@ the audio socket before the capture thread goes away.
   pass gives visibly worse output at the same file size. The scratch file is
   deleted afterwards.
 - **PNG** - the same capture arguments with `-frames:v 1 -update 1`. `image2`
-  needs `-update` for a single non-sequence filename.
+  needs `-update` for a single non-sequence filename. Written to temp first;
+  see [the screenshot flow](#print-screen-tray-and-screenshots).
 
 The window refuses to close while a recording runs (`onCloseRequested` in
 `App.tsx`). It stops the recorder first, so no half-written file survives.
+
+**The recording bar stays out of the video.** `setContentProtected(true)`
+(`WDA_EXCLUDEFROMCAPTURE`) is set on `main` *before* ffmpeg spawns, so the first
+frame is already clean, and cleared when the status leaves `recording` or the
+start fails. While recording the bar is always on top and is moved under the
+frame by `barPosition()` - above it at the screen edge, inside its bottom edge
+when the frame fills the screen.
 
 Before every start, `free_space` is checked and the recording is refused below
 500 MB.
@@ -259,6 +325,10 @@ The Rust side is intentionally tiny.
 | `free_space(path)` | `lib.rs` | Free bytes on the volume holding `path`. Uses `GetDiskFreeSpaceExW`, and returns `None` on non-Windows rather than blocking a recording on a check it cannot make. |
 | `system_audio_start()` | `loopback.rs` | Starts loopback capture, returns `{ port, format, sampleRate, channels }`. |
 | `system_audio_stop()` | `loopback.rs` | Sets the stop flag for the capture thread. |
+| `copy_image(path)` | `lib.rs` | Puts a PNG on the clipboard. In Rust because the file may sit outside every fs scope. |
+| `move_file(from, to)` | `lib.rs` | Rename, or copy + remove across drives (temp is on C:, the output folder may not be). |
+| `open_with(path)` | `lib.rs` | Windows' own "Open with" dialog (`rundll32 shell32.dll,OpenAs_RunDLL`). |
+| `quit()` | `lib.rs` | Ends the app. Called by the tray's Quit after the recording is finished. |
 
 `system_audio_start` stops any previous capture first, so a recording that ended
 badly cannot keep writing.
@@ -286,6 +356,10 @@ step there is.
 `presetFields()` returns the preset keys in a fixed order, so a JSON comparison
 can tell settings and presets apart.
 
+`printScreen` and `delay` are app-wide, not part of a preset. "Start with
+Windows" is not stored at all: the Run key is the truth, read with
+`isEnabled()` from `tauri-plugin-autostart`.
+
 ## Window auto-sizing
 
 The main window has a fixed width (480) and follows its content in height. A
@@ -299,8 +373,13 @@ never change the root element's box and the `ResizeObserver` stays quiet.
 dropdowns.
 
 While recording, the panel becomes a small draggable bar sized to its content
-(`widthRef = null`). The panel's position before the switch is remembered and
-restored afterwards, so it does not inherit wherever the bar was parked.
+(`widthRef = null`), placed at the frame. The panel's position before the switch
+is remembered and restored afterwards, so it does not inherit wherever the bar
+was parked.
+
+The startup splash renders inside the **same** `<main>` element as the panel.
+`fit()` observes that element; swapping it for another one would leave the
+observers watching a detached node.
 
 [`appKeys.ts`](../src/lib/appKeys.ts) swallows browser shortcuts - reload,
 devtools, print, find, zoom, context menu - because none of that belongs in an
@@ -312,7 +391,7 @@ handler, which would otherwise hand reload and print back to the webview.
 ## Permissions
 
 [`src-tauri/capabilities/default.json`](../src-tauri/capabilities/default.json)
-applies to the `main` and `overlay` windows. Notable entries:
+applies to the `main`, `overlay` and `shotbar` windows. Notable entries:
 
 - `shell:allow-execute` and `shell:allow-spawn` are restricted to the
   `binaries/ffmpeg` sidecar, with `args: true`
@@ -320,6 +399,10 @@ applies to the `main` and `overlay` windows. Notable entries:
 - `fs` access is scoped to the video and temp directories
 - `opener:allow-open-url` is limited to `https://github.com/*` and
   `https://ko-fi.com/*`
+- `core:window:allow-set-content-protected` keeps the recording bar out of the
+  video; `allow-set-always-on-top` and `allow-unminimize` bring it forward
+- `dialog:allow-save` for "Save to…", `autostart:*` for "Start with Windows"
+- tray and menu calls are covered by `core:default`
 
 If you add a Tauri API call and it fails at runtime with a permission error,
 this file is the place to look.
@@ -371,11 +454,30 @@ covers the parts where a silent mistake is expensive:
 
 | File | Covers |
 | --- | --- |
-| `geometry.test.ts` | clamping, even rounding, monitor hit-testing, layout repair |
+| `geometry.test.ts` | clamping, even rounding, monitor hit-testing, layout repair, recording bar placement |
 | `settings.test.ts` | preset field selection and live syncing |
 | `ffmpeg.test.ts` | input order and `-map` arguments for every audio combination |
 | `version.test.ts` | version comparison for the update hint |
 | `loopback.rs` | socket pacing keeps whole frames and lags the clock |
+
+## Promo images
+
+`rbox-promo-2.png`, `rbox-promo-3.png`, `demo.gif` and `demo.mp4` are rendered
+from the **real UI** in a browser.
+[`scripts/promo/mock.ts`](../scripts/promo/mock.ts) answers the Tauri IPC with
+`mockIPC` / `mockWindows`; only the two native Windows menus are drawn by hand
+in `promo.tsx`. `rbox-promo-1.png` is not generated.
+
+```bash
+npx vite    # dev server on :1420
+node <browser-automation>/browser.mjs http://localhost:1420/scripts/promo/promo.html --script scripts/promo/shoot.mjs
+node <browser-automation>/browser.mjs http://localhost:1420/scripts/promo/overlay.html --script scripts/promo/demo.mjs
+```
+
+`shoot.mjs` writes the two PNGs; `demo.mjs` captures the overlay frame by frame
+and encodes GIF and MP4 with the project's ffmpeg sidecar. `OUT=<dir>` writes
+elsewhere for review. Intermediate captures land in `scripts/promo/.shots/`
+(git-ignored). Headless screenshots carry no pointer, so the demo draws one.
 
 ## Things that will bite you
 
@@ -394,6 +496,14 @@ covers the parts where a silent mistake is expensive:
   mode and will truncate the audio track.
 - **`-list_devices` exits non-zero.** That is normal, do not treat it as an
   error.
+- **Tauri versions out of step.** The `tauri` crate and `@tauri-apps/api` must
+  share major.minor, and the CLI should match. A new plugin can pull the crate
+  up; bump the npm side with it.
+- **Screenshotting your own UI.** Anything rbox shows while capturing is in the
+  shot: hide the overlay before capturing, close the countdown ring, keep the
+  recording bar content-protected.
+- **Measuring before render.** The overlay renders nothing until it knows its
+  bounds, so an effect that measures the toolbar must re-run once it exists.
 
 ## Licensing
 

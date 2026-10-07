@@ -31,6 +31,38 @@
           border-color: #fca5a5;
         }
       }
+      /* Countdown before a delayed capture, in the middle of the region. */
+      .msg {
+        display: none;
+      }
+      .msg span {
+        padding: 8px 14px;
+        border-radius: 10px;
+        background: rgb(24 24 27 / 0.9);
+        color: #fafafa;
+        font: 600 14px system-ui, sans-serif;
+        white-space: nowrap;
+      }
+      /* Confirmation after a menu pick: the window is sized to the pill. */
+      .confirm .msg {
+        display: block;
+      }
+      .confirm .msg span {
+        display: inline-block;
+      }
+      .counting .msg {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .msg .count {
+        min-width: 1.4em;
+        text-align: center;
+        font-size: 40px;
+        font-variant-numeric: tabular-nums;
+      }
       @media (prefers-reduced-motion: reduce) {
         .ring {
           animation: none;
@@ -41,5 +73,30 @@
 
   <body>
     <div class="ring"></div>
+    <div class="msg"><span id="msg"></span></div>
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+
+      // Countdown before a delayed capture, ticking down to 1.
+      let count = Number(params.get("count"));
+      if (count > 0) {
+        const el = document.getElementById("msg");
+        el.classList.add("count");
+        el.textContent = count;
+        document.body.classList.add("counting");
+        const id = setInterval(() => {
+          if (--count > 0) el.textContent = count;
+          else clearInterval(id);
+        }, 1000);
+      }
+
+      // Pick mode (?pick): an invisible 1 px window that only opens the native
+      // menu after a screenshot. Loaded on demand so the ring stays light.
+      if (params.has("pick")) {
+        document.querySelector(".ring").remove();
+        const { popShotMenu } = await import("./src/lib/shotMenu.ts");
+        await popShotMenu();
+      }
+    </script>
   </body>
 </html>

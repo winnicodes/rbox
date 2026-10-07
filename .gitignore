@@ -14,6 +14,7 @@ dist-ssr
 
 # Personal scratch notes, not part of the project
 /ToDo
+/ROADMAP.md
 
 # tsconfig.node.json is a composite project, so `tsc -b` drops one of these
 *.tsbuildinfo
@@ -34,6 +35,9 @@ desktop.ini
 *.njsproj
 *.sln
 *.sw?
+
+# Intermediate captures of scripts/promo/shoot.mjs
+scripts/promo/.shots/
 
 # ffmpeg sidecar (fetched by scripts/fetch-ffmpeg.mjs)
 src-tauri/binaries/

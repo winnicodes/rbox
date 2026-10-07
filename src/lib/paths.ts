@@ -2,6 +2,7 @@ import { join, videoDir, tempDir } from "@tauri-apps/api/path";
 import { mkdir, exists } from "@tauri-apps/plugin-fs";
 import type { Format } from "./settings";
 
+/** One folder for every format. */
 export async function defaultOutDir(): Promise<string> {
   return join(await videoDir(), "rbox");
 }
@@ -28,6 +29,11 @@ export async function outputPath(dir: string | null, format: Format): Promise<st
 
 export async function palettePath(): Promise<string> {
   return join(await tempDir(), `rbox-palette-${Date.now()}.png`);
+}
+
+/** A screenshot waits here until the shot bar says what to do with it. */
+export async function tempShotPath(): Promise<string> {
+  return join(await tempDir(), `rbox-shot-${Date.now()}.png`);
 }
 
 /** GIF is encoded from a recorded mp4; that mp4 is scratch and gets deleted. */

@@ -2,20 +2,24 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { virtualBounds } from "./geometry";
 import { listMonitors } from "./monitors";
+import type { Format } from "./settings";
 
 /**
  * One overlay spanning the whole virtual desktop. Windows then renders it at a
  * single DPI, so the overlay's devicePixelRatio is the only scale factor its
  * math needs — which is what keeps mixed-scaling setups correct.
+ *
+ * `quick` is the Print Screen / tray flow: start blank and capture right away,
+ * with this format preselected on the toolbar.
  */
-export async function openOverlay(): Promise<void> {
+export async function openOverlay(quick?: Format): Promise<void> {
   const existing = await WebviewWindow.getByLabel("overlay");
   if (existing) await existing.close();
 
   const bounds = virtualBounds(await listMonitors());
 
   const win = new WebviewWindow("overlay", {
-    url: "overlay.html",
+    url: quick ? `overlay.html?quick=${quick}` : "overlay.html",
     title: "rbox region",
     transparent: true,
     decorations: false,

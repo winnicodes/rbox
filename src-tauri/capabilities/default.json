@@ -4,6 +4,7 @@
   "description": "Permissions for the main window and the selection overlay",
   "windows": [
     "main",
+    "shotbar",
     "overlay"
   ],
   "permissions": [
@@ -14,12 +15,14 @@
     "core:window:allow-set-position",
     "core:window:allow-set-size",
     "core:window:allow-set-always-on-top",
+    "core:window:allow-set-content-protected",
     "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-set-focus",
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-close",
     "core:window:allow-minimize",
+    "core:window:allow-unminimize",
     "core:window:allow-start-dragging",
     "core:window:allow-destroy",
     "core:window:allow-available-monitors",
@@ -30,6 +33,7 @@
     "core:window:allow-outer-position",
     "core:window:allow-inner-size",
     "dialog:allow-open",
+    "dialog:allow-save",
     "fs:allow-mkdir",
     "fs:allow-remove",
     "fs:allow-exists",
@@ -84,6 +88,9 @@
     "shell:allow-stdin-write",
     "shell:allow-kill",
     "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister"
+    "global-shortcut:allow-unregister",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled"
   ]
 }

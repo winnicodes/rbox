@@ -153,3 +153,23 @@ export function fitRectToMonitors(r: Rect, monitors: MonitorInfo[]): Rect | null
   );
   return onScreen ? clampRect(r, virtualBounds(monitors)) : null;
 }
+
+/**
+ * Where the recording bar goes, in physical px: under the frame, above it when
+ * the screen ends there, inside the frame's bottom edge when neither fits. It
+ * is excluded from capture, so inside is allowed. Left edge follows the frame,
+ * kept on the monitor.
+ */
+export function barPosition(
+  rect: Rect,
+  mon: MonitorInfo,
+  bar: { w: number; h: number },
+  gap: number,
+): { x: number; y: number } {
+  const x = Math.max(mon.x, Math.min(rect.x, mon.x + mon.w - bar.w));
+  const below = rect.y + rect.h + gap;
+  const above = rect.y - gap - bar.h;
+  const y =
+    below + bar.h <= mon.y + mon.h ? below : above >= mon.y ? above : rect.y + rect.h - bar.h - gap;
+  return { x: Math.round(x), y: Math.round(y) };
+}

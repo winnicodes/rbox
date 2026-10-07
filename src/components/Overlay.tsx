@@ -5,15 +5,16 @@ import {
   ArrowDownUpIcon,
   BookmarkIcon,
   CheckIcon,
+  CircleIcon,
   HashIcon,
   LinkIcon,
   PencilRulerIcon,
 } from "lucide-react";
 import NumberField from "@/components/NumberField";
 import { cn } from "@/lib/utils";
-import { REGION_CANCELLED, REGION_PICKED } from "@/lib/events";
+import { QUICK_CAPTURE, REGION_CANCELLED, REGION_PICKED } from "@/lib/events";
 import { listMonitors } from "@/lib/monitors";
-import { loadSettings, saveSettings } from "@/lib/settings";
+import { loadSettings, saveSettings, type Format } from "@/lib/settings";
 import {
   centeredRect,
   clampRect,
@@ -49,6 +50,16 @@ const EDGE_GAP = 8;
 const TOOLBAR_GUESS = { w: 640, h: 112 };
 
 type Mode = "presets" | "numbers";
+
+/** Opened by Print Screen or the tray: the toolbar captures instead of only
+ * picking, starting on this format. */
+const QUICK = new URLSearchParams(location.search).get("quick") as Format | null;
+
+const QUICK_FORMATS: { format: Format; label: string }[] = [
+  { format: "png", label: "Screenshot" },
+  { format: "mp4", label: "Video" },
+  { format: "gif", label: "GIF" },
+];
 
 type Drag =
   | { kind: "new"; anchor: { x: number; y: number } }
@@ -114,6 +125,8 @@ export default function Overlay() {
   const drag = useRef<Drag | null>(null);
   const [dragging, setDragging] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
+  /** Quick mode only. Print Screen always starts on Screenshot. */
+  const [format, setFormat] = useState<Format>(QUICK ?? "png");
 
   useEffect(() => {
     (async () => {
@@ -135,7 +148,8 @@ export default function Overlay() {
 
       // Reopening the overlay picks up the saved region instead of starting
       // blank — "Change" is an edit, not a redraw. Redraw clears it on purpose.
-      const saved = loadSettings().rect;
+      // Print Screen is a fresh snip, so it starts blank.
+      const saved = QUICK ? null : loadSettings().rect;
       if (saved) {
         setRect(evenRect(clampRect(saved, b)));
         setMode("numbers");
@@ -205,9 +219,16 @@ export default function Overlay() {
     if (!rect) return cancel();
     const final = evenRect(rect);
     saveSettings({ ...loadSettings(), rect: final, monitorName: null });
-    await emitTo("main", REGION_PICKED, final);
-    await getCurrentWindow().close();
-  }, [rect, cancel]);
+    const win = getCurrentWindow();
+    if (QUICK) {
+      // Off screen before main captures, or the dimmer ends up in the shot.
+      await win.hide();
+      await emitTo("main", QUICK_CAPTURE, { rect: final, format });
+    } else {
+      await emitTo("main", REGION_PICKED, final);
+    }
+    await win.close();
+  }, [rect, cancel, format]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -240,7 +261,8 @@ export default function Overlay() {
   }, [rect, setClamped, cancel, confirm, ratio]);
 
   // Measured, not hard-coded: the toolbar changes size with the mode and with
-  // the height of NumberField.
+  // the height of NumberField. `bounds` is in the deps because nothing renders
+  // before it is known, so the first run finds no toolbar to observe.
   useEffect(() => {
     const el = toolbarRef.current;
     if (!el) return;
@@ -250,7 +272,7 @@ export default function Overlay() {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [mode, rect === null]);
+  }, [mode, rect === null, bounds === null]);
 
   // A transparent window that renders nothing is invisible, so a failed init
   // would look like "the overlay never opened". Say so instead.
@@ -282,10 +304,11 @@ export default function Overlay() {
     ? toolbarBelow
       ? css.y + css.h + EDGE_GAP
       : Math.max(4, css.y - toolbar.h - EDGE_GAP)
-    : 0;
+    : // No selection yet: centred under the hint, whose two lines are ~60 px tall.
+      hintBox.y + hintBox.h / 2 + 54;
   const toolbarLeft = css
     ? Math.min(Math.max(4, css.x), Math.max(4, viewW - toolbar.w - 4))
-    : 0;
+    : hintBox.x + (hintBox.w - toolbar.w) / 2;
 
   function setW(w: number) {
     if (!rect) return;
@@ -312,8 +335,11 @@ export default function Overlay() {
     return home ?? monitorOfRect(monitors, { ...bounds!, w: 1, h: 1 });
   }
   function applyPreset(w: number, h: number) {
+    // An existing frame keeps its top-left corner and only changes size; it
+    // shifts only where it would run off the desktop. Without one: centred.
     const mon = currentMonitor();
-    if (mon) setClamped(centeredRect(w, h, mon));
+    if (rect) setClamped({ ...rect, w, h });
+    else if (mon) setClamped(centeredRect(w, h, mon));
     if (ratio) setRatio(w / h);
   }
   function fullScreen() {
@@ -440,6 +466,18 @@ export default function Overlay() {
         )}
 
         <span className="mx-1 w-px self-stretch bg-white/15" />
+        {QUICK &&
+          QUICK_FORMATS.map((f) => (
+            <button
+              key={f.format}
+              type="button"
+              aria-pressed={format === f.format}
+              onClick={() => setFormat(f.format)}
+              className={format === f.format ? chipOn : chip}
+            >
+              {f.label}
+            </button>
+          ))}
         <button
           type="button"
           disabled={!rect}
@@ -449,8 +487,17 @@ export default function Overlay() {
             focusRing,
           )}
         >
-          <CheckIcon className="size-4.25" />
-          Use area
+          {QUICK ? (
+            <>
+              <CircleIcon className="size-3.5 fill-red-500 text-red-500" />
+              {format === "png" ? "Capture" : "Record"}
+            </>
+          ) : (
+            <>
+              <CheckIcon className="size-4.25" />
+              Use area
+            </>
+          )}
         </button>
       </div>
 

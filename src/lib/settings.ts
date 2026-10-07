@@ -20,6 +20,8 @@ export type Settings = {
   gifWidth: number;
   /** Print Screen opens the area picker. App-wide, not part of a preset. */
   printScreen: boolean;
+  /** Seconds to wait between confirming the area and capturing. App-wide. */
+  delay: number;
   presets: Preset[];
   /** Name of the selected preset, or null. */
   activePreset: string | null;
@@ -70,6 +72,7 @@ export const DEFAULTS: Settings = {
   gifFps: 15,
   gifWidth: 640,
   printScreen: false,
+  delay: 0,
   presets: [],
   activePreset: null,
 };

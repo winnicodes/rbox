@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  barPosition,
   centeredRect,
   clampRect,
   evenRect,
@@ -161,4 +162,14 @@ test("a remembered area without a monitor name gets the one it sits on", () => {
 
 test("no monitors and no area leaves both alone", () => {
   assert.deepEqual(startupRect(null, null, []), { rect: null, monitorName: null });
+});
+
+test("barPosition: below the frame, above at the screen bottom, inside when full", () => {
+  const mon = monitors[0];
+  const bar = { w: 300, h: 56 };
+  assert.deepEqual(barPosition({ x: 100, y: 100, w: 800, h: 400 }, mon, bar, 10), { x: 100, y: 510 });
+  assert.deepEqual(barPosition({ x: 100, y: 600, w: 800, h: 450 }, mon, bar, 10), { x: 100, y: 534 });
+  assert.deepEqual(barPosition({ x: 0, y: 0, w: 1920, h: 1080 }, mon, bar, 10), { x: 0, y: 1014 });
+  // Kept on the monitor horizontally.
+  assert.equal(barPosition({ x: 1800, y: 100, w: 100, h: 100 }, mon, bar, 10).x, 1620);
 });

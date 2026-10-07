@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <title>rbox promo overlay</title>
+    <style>
+      /* A stand-in desktop under the real overlay. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+      }
+      /* !important: the app CSS gives body the theme background. */
+      body {
+        background: radial-gradient(120% 90% at 70% 30%, #6d7fa6 0%, #3c4865 55%, #232a3b 100%) !important;
+      }
+      /* In viewport percentages, so it sits in the same spot at any size. */
+      .app {
+        position: absolute;
+        left: 31.25%;
+        top: 30.5%;
+        width: 37.5%;
+        height: 37%;
+        display: flex;
+        flex-direction: column;
+        border-radius: 10px;
+        background: #f4f5f7;
+        box-shadow: 0 30px 60px -20px rgb(0 0 0 / 0.6);
+        overflow: hidden;
+      }
+      .app .bar {
+        height: 9%;
+        background: #e3e6eb;
+      }
+      .app .body {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4%;
+        padding: 4%;
+      }
+      .app .line {
+        height: 12px;
+        border-radius: 6px;
+        background: #cfd4dc;
+        margin-bottom: 12px;
+      }
+      .app .chart {
+        border-radius: 8px;
+        background: linear-gradient(180deg, #e25c5c33, #e25c5c11);
+        border: 1px solid #e25c5c55;
+      }
+      /* Headless screenshots carry no pointer, so the demo draws one. */
+      #cursor {
+        position: fixed;
+        left: 0;
+        top: 0;
+        z-index: 100;
+        display: none;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="bar"></div>
+      <div class="body">
+        <div>
+          <div class="line" style="width: 80%"></div>
+          <div class="line" style="width: 60%"></div>
+          <div class="line" style="width: 70%"></div>
+          <div class="line" style="width: 45%"></div>
+          <div class="line" style="width: 65%"></div>
+        </div>
+        <div class="chart"></div>
+      </div>
+    </div>
+    <div id="root"></div>
+    <svg id="cursor" width="22" height="22" viewBox="0 0 24 24">
+      <path
+        d="M4 2.5 19.5 13l-7 1.2L9 20.5z"
+        fill="#fff"
+        stroke="#111"
+        stroke-width="1.5"
+        stroke-linejoin="round"
+      />
+    </svg>
+    <script type="module">
+      import React from "react";
+      import ReactDOM from "react-dom/client";
+      import Overlay from "/src/components/Overlay.tsx";
+      import { installMocks } from "./mock.ts";
+      import "/src/index.css";
+
+      installMocks("overlay");
+      ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(Overlay));
+
+      if (new URLSearchParams(location.search).has("cursor")) {
+        const cursor = document.getElementById("cursor");
+        addEventListener("pointermove", (e) => {
+          cursor.style.display = "block";
+          cursor.style.transform = `translate(${e.clientX - 4}px, ${e.clientY - 2}px)`;
+        });
+      }
+    </script>
+  </body>
+</html>

@@ -2,17 +2,25 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
-import { getCurrentWindow, LogicalSize, type PhysicalPosition } from "@tauri-apps/api/window";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow, LogicalSize, PhysicalPosition } from "@tauri-apps/api/window";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { remove } from "@tauri-apps/plugin-fs";
 import {
   register as registerShortcut,
   unregister as unregisterShortcut,
 } from "@tauri-apps/plugin-global-shortcut";
+import {
+  disable as disableAutostart,
+  enable as enableAutostart,
+  isEnabled as autostartEnabled,
+} from "@tauri-apps/plugin-autostart";
+import { IconMenuItem, Menu, PredefinedMenuItem } from "@tauri-apps/api/menu";
+import { TrayIcon } from "@tauri-apps/api/tray";
 import { toast } from "sonner";
 import { isNewer } from "@/lib/version";
 import {
+  AppWindowIcon,
   ArrowUpCircleIcon,
   CheckIcon,
   ChevronLeftIcon,
@@ -29,11 +37,13 @@ import {
   MinusIcon,
   MonitorIcon,
   PencilIcon,
+  PowerIcon,
   SettingsIcon,
   VideoIcon,
   Volume2Icon,
   VolumeOffIcon,
   XIcon,
+  type LucideIcon,
 } from "lucide-react";
 
 import logo from "@/assets/logo.svg";
@@ -53,12 +63,14 @@ import Segmented, { SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "@/components/Segmen
 import DeviceSelect, { shortDeviceName } from "@/components/DeviceSelect";
 
 import { cn } from "@/lib/utils";
-import { REGION_PICKED } from "@/lib/events";
+import { QUICK_CAPTURE, REGION_PICKED, SHOT_ACTION } from "@/lib/events";
+import { menuIcon } from "@/lib/shotMenu";
 import { listMonitors } from "@/lib/monitors";
 import { openOverlay } from "@/lib/overlayWindow";
-import { hideFrame, showFrame } from "@/lib/frameWindow";
-import { defaultOutDir, outputPath, palettePath, tempVideoPath } from "@/lib/paths";
+import { hideFrame, showFrame, showShotMenu } from "@/lib/frameWindow";
+import { defaultOutDir, outputPath, palettePath, tempShotPath, tempVideoPath } from "@/lib/paths";
 import {
+  type Format,
   type PresetArea,
   loadSettings,
   presetFields,
@@ -76,6 +88,7 @@ import {
   type Recording,
 } from "@/lib/ffmpeg";
 import {
+  barPosition,
   centeredRect,
   evenRect,
   fitRectToMonitors,
@@ -95,6 +108,16 @@ const REPO_URL = "https://github.com/winnicodes/rbox";
 const RELEASES_API = "https://api.github.com/repos/winnicodes/rbox/releases/latest";
 const KOFI_URL = "https://ko-fi.com/winnicodes";
 const LOW_SPACE_BYTES = 500 * 1024 * 1024;
+const DELAY_CHOICES = [0, 3, 5, 10];
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Brings the panel back from the tray or the taskbar, without taking focus. */
+async function surface() {
+  const win = getCurrentWindow();
+  await win.unminimize().catch(() => {});
+  await win.show().catch(() => {});
+}
 
 /** The panel's fixed width. Its height follows the content — see fit(). */
 const WIDTH_MAIN = 480;
@@ -153,6 +176,8 @@ export default function App() {
   /** Link to a release newer than this build, or null. */
   const [updateUrl, setUpdateUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("idle");
+  /** False until monitors, settings and devices are in: only the logo shows. */
+  const [ready, setReady] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [view, setView] = useState<"main" | "settings">("main");
   /** Shows the recording ring on screen without recording. */
@@ -167,6 +192,8 @@ export default function App() {
   const lastMics = useRef<string[]>([]);
   /** Latched for as long as start() runs, so one click starts one recording. */
   const starting = useRef(false);
+  /** The screenshot waiting in temp for the shot bar's choice. */
+  const pendingShot = useRef<string | null>(null);
   /** Where the panel stood before the recording bar took over. */
   const posBeforeBar = useRef<PhysicalPosition | null>(null);
   /** Window width for fit(); null means "as wide as the content is". */
@@ -196,14 +223,17 @@ export default function App() {
       setDefaultDir(await defaultOutDir().catch(() => ""));
       const version = await getVersion().catch(() => "");
       setAppVersion(version);
-      // Offline, rate-limited or no release yet: no arrow, no complaint.
+      // Offline, rate-limited or no release yet: no arrow, no complaint. Not
+      // awaited: a slow network must not hold the UI back.
       if (version) {
-        const latest = await fetch(RELEASES_API)
+        void fetch(RELEASES_API)
           .then((r) => (r.ok ? (r.json() as Promise<{ tag_name?: string; html_url?: string }>) : null))
-          .catch(() => null);
-        if (latest?.tag_name && latest.html_url && isNewer(latest.tag_name, version)) {
-          setUpdateUrl(latest.html_url);
-        }
+          .then((latest) => {
+            if (latest?.tag_name && latest.html_url && isNewer(latest.tag_name, version)) {
+              setUpdateUrl(latest.html_url);
+            }
+          })
+          .catch(() => {});
       }
       try {
         // Only a presence check — the version string itself is not shown.
@@ -226,6 +256,7 @@ export default function App() {
         ...startupRect(prev.rect, prev.monitorName, mons),
       }));
       setAudioDevices(await listAudioDevices().catch(() => []));
+      setReady(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -303,10 +334,26 @@ export default function App() {
     // The bar is a window of its own to drag around; the panel should not
     // inherit wherever it was parked, so it goes back where it stood.
     const win = getCurrentWindow();
+    // While recording the bar floats above everything (Print Screen may start
+    // it with other apps in front) and stays out of the video. Protection is
+    // switched on in start(), before ffmpeg grabs its first frame.
+    void win.setAlwaysOnTop(status === "recording").catch(() => {});
+    if (status !== "recording") void win.setContentProtected(false).catch(() => {});
     if (status === "recording") {
       void win
         .outerPosition()
-        .then((p) => (posBeforeBar.current = p))
+        .then((p) => {
+          posBeforeBar.current = p;
+          // The bar sits at the frame, like the picker's toolbar. Its size is
+          // a close estimate: fit() is resizing it in the same moment. The gap
+          // clears the 3 px ring.
+          const r = loadSettings().rect;
+          const mon = r && monitorOfRect(monitorsRef.current, r);
+          if (!r || !mon) return;
+          const s = mon.scale;
+          const at = barPosition(r, mon, { w: 320 * s, h: 57 * s }, 11 * s);
+          return win.setPosition(new PhysicalPosition(at.x, at.y));
+        })
         .catch(() => {});
     } else if (posBeforeBar.current) {
       const back = posBeforeBar.current;
@@ -356,17 +403,20 @@ export default function App() {
     const reg = registerShortcut("PrintScreen", (e) => {
       if (e.state !== "Pressed" || statusRef.current !== "idle") return;
       setPreview(false);
-      void openOverlay();
+      void openOverlay("png");
     });
-    reg.catch((e) =>
-      toast.error("Print Screen is taken", {
-        description: `${e}. Turn off "Use the Print screen key to open screen capture" in Windows settings.`,
-      }),
-    );
+    // "already registered" means another app holds the key via RegisterHotKey.
+    // Anything else is worth showing as is. Either way the switch goes back
+    // off, so it never claims a key rbox does not have.
+    reg.catch((e) => {
+      update({ printScreen: false });
+      if (/already registered/i.test(String(e))) toast.error("Print Screen is used by another app");
+      else toast.error("Print Screen unavailable", { description: String(e) });
+    });
     return () => {
       void reg.then(() => unregisterShortcut("PrintScreen")).catch(() => {});
     };
-  }, [settings.printScreen]);
+  }, [settings.printScreen, update]);
 
   // --- recording -----------------------------------------------------------
   const finish = useCallback(async (source: string) => {
@@ -405,13 +455,15 @@ export default function App() {
     }
   }, [finish]);
 
-  const start = useCallback(async () => {
+  /** `over` wins over the stored settings, for callers whose update() has not
+   * been saved yet. */
+  const start = useCallback(async (over?: Partial<Settings>) => {
     // Every path below awaits before the status flips to "recording", so a
     // second click would otherwise spawn a second recorder onto the same file.
     if (starting.current) return;
     starting.current = true;
     try {
-      const s = loadSettings();
+      const s = { ...loadSettings(), ...over };
       if (!s.rect) {
         toast.error("No area selected");
         return;
@@ -424,12 +476,27 @@ export default function App() {
         return;
       }
 
+      const scale = monitorOfRect(monitorsRef.current, s.rect)?.scale ?? 1;
+      if (s.delay > 0) {
+        // The ring marks what is about to be captured and counts down inside
+        // it. That number sits in the region, so it goes before the capture.
+        await showFrame(s.rect, scale, { count: s.delay }).catch(() => {});
+        await sleep(s.delay * 1000);
+        await hideFrame().catch(() => {});
+      }
+
       if (s.format === "png") {
         try {
-          const out = await outputPath(s.outDir, "png");
-          await screenshot(s.rect, out);
-          await revealItemInDir(out).catch(() => {});
+          const shot = await tempShotPath();
+          await screenshot(s.rect, shot);
+          // A shot nobody chose for is replaced, not kept.
+          if (pendingShot.current) await remove(pendingShot.current).catch(() => {});
+          pendingShot.current = shot;
+          await hideFrame().catch(() => {});
+          await showShotMenu();
         } catch (e) {
+          await hideFrame().catch(() => {});
+          await surface();
           toast.error("Screenshot failed", { description: String(e) });
         }
         return;
@@ -439,6 +506,8 @@ export default function App() {
         // GIF is encoded from a scratch mp4 so the recorder itself stays one path.
         const target = s.format === "gif" ? await tempVideoPath() : await outputPath(s.outDir, "mp4");
         videoPath.current = target;
+        // Keeps the recording bar out of the file (WDA_EXCLUDEFROMCAPTURE).
+        await getCurrentWindow().setContentProtected(true).catch(() => {});
         recording.current = await startRecording({
           rect: s.rect,
           fps: s.fps,
@@ -450,17 +519,105 @@ export default function App() {
         startedAt.current = Date.now();
         setElapsed(0);
         setStatus("recording");
-        const scale = monitorOfRect(monitorsRef.current, s.rect)?.scale ?? 1;
+        // Started from Print Screen the panel may sit in the tray; Stop lives here.
+        await surface();
         await showFrame(s.rect, scale).catch(() => {});
       } catch (e) {
         videoPath.current = null;
+        await getCurrentWindow().setContentProtected(false).catch(() => {});
         await hideFrame().catch(() => {});
+        await surface();
         toast.error("Could not start", { description: String(e) });
       }
     } finally {
       starting.current = false;
     }
   }, []);
+
+  // Print Screen flow: the overlay already picked area and format. The format
+  // sticks, so the panel shows what was just captured.
+  useEffect(() => {
+    const un = listen<{ rect: Rect; format: Format }>(QUICK_CAPTURE, (e) => {
+      const { rect, format } = e.payload;
+      update({ rect, format, monitorName: monitorOfRect(monitorsRef.current, rect)?.name ?? null });
+      void start({ rect, format });
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [update, start]);
+
+  // Screenshot menu choice.
+  useEffect(() => {
+    const un = listen<"copy" | "save" | "saveas" | "open" | "close">(SHOT_ACTION, async (e) => {
+      const shot = pendingShot.current;
+      if (!shot) return;
+      pendingShot.current = null;
+      const act = e.payload;
+      let kept = false;
+      try {
+        if (act === "copy") {
+          await invoke("copy_image", { path: shot });
+        } else if (act !== "close") {
+          const suggested = await outputPath(loadSettings().outDir, "png");
+          const out =
+            act === "saveas"
+              ? await saveDialog({ defaultPath: suggested, filters: [{ name: "PNG", extensions: ["png"] }] })
+              : suggested;
+          // Save as cancelled: the shot is dropped, like a dismissed menu.
+          if (!out) return;
+          await invoke("move_file", { from: shot, to: out });
+          kept = true;
+          if (act === "open") await invoke("open_with", { path: out });
+          toast.success("Saved", {
+            action: { label: "Show file", onClick: () => void revealItemInDir(out).catch(() => {}) },
+          });
+        }
+      } catch (err) {
+        await surface();
+        toast.error("Screenshot failed", { description: String(err) });
+      } finally {
+        if (!kept) await remove(shot).catch(() => {});
+      }
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, []);
+
+  // Tray right-click menu, with the app's own icons. Quit finishes a running
+  // recording first, same as closing the window.
+  useEffect(() => {
+    const snip = (format: Format) => () => {
+      if (statusRef.current !== "idle") return;
+      setPreview(false);
+      void openOverlay(format);
+    };
+    const entries: [string, LucideIcon, () => void][] = [
+      ["Screenshot", ImageIcon, snip("png")],
+      ["Video", VideoIcon, snip("mp4")],
+      ["GIF", FilmIcon, snip("gif")],
+      ["Open rbox", AppWindowIcon, () => void surface().then(() => getCurrentWindow().setFocus())],
+      [
+        "Quit rbox",
+        PowerIcon,
+        async () => {
+          if (recording.current) await stop();
+          await invoke("quit");
+        },
+      ],
+    ];
+    void (async () => {
+      const items = await Promise.all(
+        entries.map(async ([text, icon, action]) =>
+          IconMenuItem.new({ text, icon: await menuIcon(icon), action }),
+        ),
+      );
+      const separator = await PredefinedMenuItem.new({ item: "Separator" });
+      const menu = await Menu.new({ items: [...items.slice(0, 3), separator, ...items.slice(3)] });
+      await (await TrayIcon.getById("main"))?.setMenu(menu);
+    })().catch(() => {});
+  }, [stop]);
 
   const toggle = useCallback(() => {
     if (status === "recording") void stop();
@@ -477,7 +634,13 @@ export default function App() {
   // Never let the window close on a half-written mp4.
   useEffect(() => {
     const un = getCurrentWindow().onCloseRequested(async (e) => {
-      if (!recording.current) return;
+      if (!recording.current) {
+        // X goes to the tray: Print Screen and the tray menu need rbox running.
+        // Quitting is the tray's "Quit rbox".
+        e.preventDefault();
+        await getCurrentWindow().hide();
+        return;
+      }
       e.preventDefault();
       toast.info("Finishing the recording…");
       await stop();
@@ -629,6 +792,14 @@ export default function App() {
       ref={rootRef}
       className={cn("flex flex-col bg-background text-foreground", status === "recording" && "w-fit")}
     >
+      {/* Same <main> either way: fit() observes this element, not its content.
+          The splash is about the panel's height, so the window barely moves. */}
+      {!ready ? (
+        <div data-tauri-drag-region className="flex h-115 items-center justify-center">
+          <img src={logo} alt="rbox" className="size-16 animate-pulse rounded-2xl" />
+        </div>
+      ) : (
+      <>
       {/* The OS title bar is off; this row is the whole window chrome. */}
       <header
         data-tauri-drag-region
@@ -917,6 +1088,8 @@ export default function App() {
 
           <Links appVersion={appVersion} updateUrl={updateUrl} />
         </div>
+      )}
+      </>
       )}
 
       <Toaster position="top-center" richColors />
@@ -1255,6 +1428,20 @@ function SettingsPanel({
 }) {
   const dirLabel = settings.outDir ?? defaultDir;
   const isPng = settings.format === "png";
+  // The Run key is the truth, not localStorage: Task Manager can remove it.
+  const [autostart, setAutostart] = useState(false);
+  useEffect(() => {
+    void autostartEnabled().then(setAutostart, () => {});
+  }, []);
+
+  async function toggleAutostart(on: boolean) {
+    try {
+      await (on ? enableAutostart() : disableAutostart());
+      setAutostart(on);
+    } catch (e) {
+      toast.error("Could not change autostart", { description: String(e) });
+    }
+  }
 
   function toggleDevice(device: string, on: boolean) {
     update({
@@ -1356,10 +1543,21 @@ function SettingsPanel({
               <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" />
             </button>
           </Field>
-          <Field inline label="Print Screen key" sub="Opens area selection while rbox runs">
+          <Field inline label="Print Screen key" sub="The Print key opens the area selection">
             <Switch
               checked={settings.printScreen}
               onCheckedChange={(v) => update({ printScreen: v })}
+            />
+          </Field>
+          <Field inline label="Start with Windows" sub="Starts in the tray">
+            <Switch checked={autostart} onCheckedChange={(v) => void toggleAutostart(v)} />
+          </Field>
+          <Field label="Delay" sub="Between confirming the area and capturing">
+            <Segmented
+              mono
+              value={settings.delay}
+              onChange={(v) => update({ delay: v })}
+              options={DELAY_CHOICES.map((d) => ({ value: d, label: d ? `${d} s` : "Off" }))}
             />
           </Field>
         </div>
