@@ -184,19 +184,6 @@ export async function startRecording(opts: RecordOptions): Promise<Recording> {
   };
 }
 
-export async function screenshot(rect: Rect, outPath: string): Promise<void> {
-  const { code, stderr } = await run([
-    "-hide_banner",
-    ...captureArgs(rect),
-    "-frames:v", "1",
-    // image2 needs -update for a single non-sequence filename.
-    "-update", "1",
-    "-y",
-    outPath,
-  ]).execute();
-  if (code !== 0) throw new Error(`screenshot failed: ${lastError(stderr)}`);
-}
-
 /**
  * Two passes: build an optimal palette, then apply it. A single pass produces
  * visibly worse GIFs for the same size.

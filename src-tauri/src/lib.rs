@@ -46,6 +46,54 @@ fn free_space(path: String) -> Option<u64> {
     }
 }
 
+/// One frame of the desktop region (physical pixels) as a PNG. GDI in process:
+/// spawning ffmpeg for a single frame was most of the wait for the shot menu.
+#[cfg(windows)]
+#[tauri::command]
+fn screenshot(x: i32, y: i32, w: i32, h: i32, path: String) -> Result<(), String> {
+    use windows::Win32::Graphics::Gdi::*;
+
+    let mut px = vec![0u8; (w * h * 4) as usize];
+    unsafe {
+        let screen = GetDC(None);
+        let mem = CreateCompatibleDC(Some(screen));
+        let bmp = CreateCompatibleBitmap(screen, w, h);
+        let old = SelectObject(mem, bmp.into());
+        // CAPTUREBLT: include layered (transparent) windows, as gdigrab did.
+        let blit = BitBlt(mem, 0, 0, w, h, Some(screen), x, y, ROP_CODE(SRCCOPY.0 | CAPTUREBLT.0));
+        let mut info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w,
+                biHeight: -h, // top-down rows
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let rows = GetDIBits(mem, bmp, 0, h as u32, Some(px.as_mut_ptr().cast()), &mut info, DIB_RGB_COLORS);
+        SelectObject(mem, old);
+        let _ = DeleteObject(bmp.into());
+        let _ = DeleteDC(mem);
+        ReleaseDC(None, screen);
+        blit.map_err(|e| e.to_string())?;
+        if rows != h {
+            return Err("GetDIBits failed".into());
+        }
+    }
+    // BGRx -> RGBA
+    for p in px.chunks_exact_mut(4) {
+        p.swap(0, 2);
+        p[3] = 255;
+    }
+    image::RgbaImage::from_raw(w as u32, h as u32, px)
+        .ok_or("bad size")?
+        .save(&path)
+        .map_err(|e| e.to_string())
+}
+
 /// Puts a PNG on the clipboard. Done here, not through the fs plugin: the file
 /// may sit in a folder the user picked, outside every fs scope.
 #[tauri::command]
@@ -138,6 +186,12 @@ pub fn run() {
             // The window is created hidden (tauri.conf.json) so --hidden never flashes it.
             if !std::env::args().any(|a| a == "--hidden") {
                 show_main(app.handle());
+            } else if let Some(w) = tauri::Manager::get_webview_window(app, "main") {
+                // A window that was never shown leaves a white, click-through
+                // ghost of itself on the desktop (WebView2 + DWM). One real
+                // show/hide round trip clears it.
+                let _ = w.show();
+                let _ = w.hide();
             }
             Ok(())
         });
@@ -154,6 +208,7 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             free_space,
+            screenshot,
             copy_image,
             move_file,
             open_with,

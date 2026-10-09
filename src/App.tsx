@@ -82,7 +82,6 @@ import {
 import {
   ffmpegVersion,
   listAudioDevices,
-  screenshot,
   startRecording,
   toGif,
   type Recording,
@@ -488,7 +487,7 @@ export default function App() {
       if (s.format === "png") {
         try {
           const shot = await tempShotPath();
-          await screenshot(s.rect, shot);
+          await invoke("screenshot", { ...s.rect, path: shot });
           // A shot nobody chose for is replaced, not kept.
           if (pendingShot.current) await remove(pendingShot.current).catch(() => {});
           pendingShot.current = shot;

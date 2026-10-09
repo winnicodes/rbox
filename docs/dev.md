@@ -173,7 +173,9 @@ app and share its icons and, later, its translations.
 
 **Screenshot flow.**
 
-1. ffmpeg grabs one frame into a temp file (`tempShotPath()`).
+1. The `screenshot` command grabs the region with GDI into a temp file
+   (`tempShotPath()`). Not ffmpeg: starting a process for one frame made the
+   menu wait. Unlike gdigrab it leaves the cursor out.
 2. `showShotMenu()` opens the 1 px `shotbar` window at the pointer. A native
    context menu needs a foreground window to belong to, and `main` may be in the
    tray.
@@ -325,6 +327,7 @@ The Rust side is intentionally tiny.
 | `free_space(path)` | `lib.rs` | Free bytes on the volume holding `path`. Uses `GetDiskFreeSpaceExW`, and returns `None` on non-Windows rather than blocking a recording on a check it cannot make. |
 | `system_audio_start()` | `loopback.rs` | Starts loopback capture, returns `{ port, format, sampleRate, channels }`. |
 | `system_audio_stop()` | `loopback.rs` | Sets the stop flag for the capture thread. |
+| `screenshot(x, y, w, h, path)` | `lib.rs` | GDI `BitBlt` of a physical-pixel region, saved as PNG. |
 | `copy_image(path)` | `lib.rs` | Puts a PNG on the clipboard. In Rust because the file may sit outside every fs scope. |
 | `move_file(from, to)` | `lib.rs` | Rename, or copy + remove across drives (temp is on C:, the output folder may not be). |
 | `open_with(path)` | `lib.rs` | Windows' own "Open with" dialog (`rundll32 shell32.dll,OpenAs_RunDLL`). |
