@@ -1,6 +1,6 @@
 [package]
 name = "rbox"
-version = "0.2.1"
+version = "0.2.2"
 description = "Minimal region screen recorder"
 authors = ["winnicodes"]
 license = "GPL-3.0-only"

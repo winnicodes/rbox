@@ -94,6 +94,57 @@ fn screenshot(x: i32, y: i32, w: i32, h: i32, path: String) -> Result<(), String
         .map_err(|e| e.to_string())
 }
 
+/// Makes a window a tool window. Chromium's occlusion tracking (browsers,
+/// Electron apps) skips those; otherwise the full-desktop overlay counts as
+/// covering every window behind it, and their videos stop painting.
+#[cfg(windows)]
+#[tauri::command]
+fn tool_window(app: tauri::AppHandle, label: String) -> Result<(), String> {
+    use tauri::Manager;
+
+    unsafe extern "system" {
+        fn GetWindowLongPtrW(hwnd: *mut std::ffi::c_void, index: i32) -> isize;
+        fn SetWindowLongPtrW(hwnd: *mut std::ffi::c_void, index: i32, value: isize) -> isize;
+    }
+    const GWL_EXSTYLE: i32 = -20;
+    const WS_EX_TOOLWINDOW: isize = 0x80;
+
+    let win = app.get_webview_window(&label).ok_or("no such window")?;
+    let hwnd = win.hwnd().map_err(|e| e.to_string())?.0;
+    unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_TOOLWINDOW) };
+    Ok(())
+}
+
+/// Windows 11 hands Print Screen to the Snipping Tool before any app hotkey
+/// sees it. This switches that Windows setting off, then tells the shell, as
+/// the toggle in Settings does. Async: the broadcast may wait on slow windows.
+#[cfg(windows)]
+#[tauri::command]
+async fn claim_print_screen() -> Result<(), String> {
+    unsafe extern "system" {
+        fn RegSetKeyValueW(key: isize, sub: *const u16, name: *const u16, ty: u32, data: *const u32, len: u32) -> i32;
+        fn SendMessageTimeoutW(hwnd: isize, msg: u32, w: usize, l: *const u16, flags: u32, timeout: u32, result: *mut usize) -> isize;
+    }
+    const HKEY_CURRENT_USER: isize = 0x8000_0001u32 as i32 as isize;
+    const REG_DWORD: u32 = 4;
+    const HWND_BROADCAST: isize = 0xffff;
+    const WM_SETTINGCHANGE: u32 = 0x001A;
+    const SMTO_ABORTIFHUNG: u32 = 0x0002;
+
+    let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let key = wide(r"Control Panel\Keyboard");
+    let name = wide("PrintScreenKeyForSnippingEnabled");
+    let off = 0u32;
+    let err = unsafe { RegSetKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), REG_DWORD, &off, 4) };
+    if err != 0 {
+        return Err(format!("registry error {err}"));
+    }
+    unsafe {
+        SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, key.as_ptr(), SMTO_ABORTIFHUNG, 1000, std::ptr::null_mut())
+    };
+    Ok(())
+}
+
 /// Puts a PNG on the clipboard. Done here, not through the fs plugin: the file
 /// may sit in a folder the user picked, outside every fs scope.
 #[tauri::command]
@@ -186,12 +237,6 @@ pub fn run() {
             // The window is created hidden (tauri.conf.json) so --hidden never flashes it.
             if !std::env::args().any(|a| a == "--hidden") {
                 show_main(app.handle());
-            } else if let Some(w) = tauri::Manager::get_webview_window(app, "main") {
-                // A window that was never shown leaves a white, click-through
-                // ghost of itself on the desktop (WebView2 + DWM). One real
-                // show/hide round trip clears it.
-                let _ = w.show();
-                let _ = w.hide();
             }
             Ok(())
         });
@@ -209,6 +254,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             free_space,
             screenshot,
+            tool_window,
+            claim_print_screen,
             copy_image,
             move_file,
             open_with,

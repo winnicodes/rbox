@@ -106,6 +106,8 @@ const REPO_URL = "https://github.com/winnicodes/rbox";
 /** Where the newest tag is published. Public data, no token needed. */
 const RELEASES_API = "https://api.github.com/repos/winnicodes/rbox/releases/latest";
 const KOFI_URL = "https://ko-fi.com/winnicodes";
+/** "Use the Print screen key to open screen capture". */
+const PRINT_KEY_SETTINGS = "ms-settings:easeofaccess-keyboard";
 const LOW_SPACE_BYTES = 500 * 1024 * 1024;
 const DELAY_CHOICES = [0, 3, 5, 10];
 
@@ -290,10 +292,18 @@ export default function App() {
       const win = getCurrentWindow();
       void win
         .setSize(new LogicalSize(w, h))
-        .then(() => {
+        .then(async () => {
           if (centred) return;
           centred = true;
-          return win.center();
+          await win.center();
+          // Autostart (--hidden): a window resized while it was never shown
+          // leaves a white, click-through ghost of itself on the desktop
+          // (WebView2 + DWM). One show/hide round trip at its final size
+          // clears it; earlier, in Rust setup, is too soon.
+          if (!(await win.isVisible())) {
+            await win.show();
+            await win.hide();
+          }
         })
         .catch(() => {});
     };
@@ -393,17 +403,22 @@ export default function App() {
     };
   }, [update]);
 
-  // Print Screen opens the area picker. Unregister waits for register, so a
-  // quick off-on-off cannot leave the key grabbed.
+  // Print Screen opens the area picker. Register and unregister run strictly
+  // in turn on one chain: overlapping, a quick on-off-on (or StrictMode's
+  // double effect) registers twice and rbox finds the key taken by itself.
   const statusRef = useRef(status);
   statusRef.current = status;
+  const keyChain = useRef<Promise<unknown>>(Promise.resolve());
   useEffect(() => {
     if (!settings.printScreen) return;
-    const reg = registerShortcut("PrintScreen", (e) => {
-      if (e.state !== "Pressed" || statusRef.current !== "idle") return;
-      setPreview(false);
-      void openOverlay("png");
-    });
+    const reg = keyChain.current.then(() =>
+      registerShortcut("PrintScreen", (e) => {
+        if (e.state !== "Pressed" || statusRef.current !== "idle") return;
+        setPreview(false);
+        void openOverlay("png");
+      }),
+    );
+    keyChain.current = reg.catch(() => {});
     // "already registered" means another app holds the key via RegisterHotKey.
     // Anything else is worth showing as is. Either way the switch goes back
     // off, so it never claims a key rbox does not have.
@@ -413,7 +428,7 @@ export default function App() {
       else toast.error("Print Screen unavailable", { description: String(e) });
     });
     return () => {
-      void reg.then(() => unregisterShortcut("PrintScreen")).catch(() => {});
+      keyChain.current = reg.then(() => unregisterShortcut("PrintScreen")).catch(() => {});
     };
   }, [settings.printScreen, update]);
 
@@ -1286,7 +1301,7 @@ function Field({
   children,
 }: {
   label: string;
-  sub?: string;
+  sub?: React.ReactNode;
   inline?: boolean;
   children: React.ReactNode;
 }) {
@@ -1542,10 +1557,37 @@ function SettingsPanel({
               <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" />
             </button>
           </Field>
-          <Field inline label="Print Screen key" sub="The Print key opens the area selection">
+          <Field
+            inline
+            label="Print Screen key"
+            sub={
+              // Switching on takes the key from the Snipping Tool (claim_print_screen).
+              // The link is the fallback should Windows not pick that up live.
+              <>
+                The Print key opens the area selection, not the Snipping Tool. Snipping
+                Tool still opens?{" "}
+                <button
+                  type="button"
+                  onClick={() => void openUrl(PRINT_KEY_SETTINGS)}
+                  className="underline underline-offset-2 hover:text-foreground"
+                >
+                  Turn it off in Windows
+                </button>
+              </>
+            }
+          >
             <Switch
               checked={settings.printScreen}
-              onCheckedChange={(v) => update({ printScreen: v })}
+              onCheckedChange={(v) => {
+                if (v) {
+                  void invoke("claim_print_screen").catch((e) =>
+                    toast.error("Could not take Print Screen from the Snipping Tool", {
+                      description: String(e),
+                    }),
+                  );
+                }
+                update({ printScreen: v });
+              }}
             />
           </Field>
           <Field inline label="Start with Windows" sub="Starts in the tray">

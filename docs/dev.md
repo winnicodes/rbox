@@ -137,6 +137,12 @@ in `setup` unless the process was started with `--hidden`, which is what
 autostart passes, so a boot never flashes the window. Until monitors, settings
 and devices are loaded, `main` shows only the logo (`ready` in `App.tsx`).
 
+A hidden window that gets resized before it was ever shown leaves a white,
+click-through ghost of itself on the desktop (WebView2 + DWM). On a `--hidden`
+start `fit()` does exactly that, so after its first resize and `center()` it
+runs one `show()`/`hide()` round trip while the window is still invisible. Doing
+it earlier, in Rust `setup`, is too soon - the resize comes later.
+
 **X hides `main` to the tray**, it does not quit. Quitting is the tray's "Quit
 rbox", which finishes a running recording and then calls the `quit` command.
 Closing while recording (Alt+F4) still finishes the file first and destroys the
@@ -162,6 +168,24 @@ emits** `rbox:quick-capture` - otherwise the dimmer ends up in the screenshot.
 `main` stores area and format and calls `start({ rect, format })`. The override
 argument exists because `update()` has not reached `localStorage` yet when
 `start()` reads it.
+
+Quick mode hides `main` before opening the overlay: a snip is about the screen,
+not the panel. A recording brings it back as the bar.
+
+The overlay is made a tool window (`tool_window`) **after** `show()`. Chromium's
+occlusion tracking skips tool windows; otherwise every browser behind the
+full-desktop overlay thinks it is covered and stops painting video.
+
+**Print Screen key.** Windows 11 gives Print to the Snipping Tool before any
+`RegisterHotKey` sees it ("Use the Print screen key to open screen capture", on
+by default). Switching rbox's setting on calls `claim_print_screen`, which sets
+`HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled` to 0 and
+broadcasts `WM_SETTINGCHANGE`, as the toggle in Settings does. The hint under
+the switch links to that page in case Windows does not pick it up.
+
+Register and unregister run one after another on a promise chain (`keyChain`).
+Overlapping - a quick on-off-on, or StrictMode's double effect in dev - rbox
+registers twice and finds the key taken by itself.
 
 If registering Print Screen fails (another app holds it), the setting is turned
 back off, so the switch never claims a key rbox does not have.
@@ -328,6 +352,8 @@ The Rust side is intentionally tiny.
 | `system_audio_start()` | `loopback.rs` | Starts loopback capture, returns `{ port, format, sampleRate, channels }`. |
 | `system_audio_stop()` | `loopback.rs` | Sets the stop flag for the capture thread. |
 | `screenshot(x, y, w, h, path)` | `lib.rs` | GDI `BitBlt` of a physical-pixel region, saved as PNG. |
+| `tool_window(label)` | `lib.rs` | Adds `WS_EX_TOOLWINDOW` to a window, so Chromium does not count it as covering what lies behind. |
+| `claim_print_screen()` | `lib.rs` | Turns off Windows' Print Screen -> Snipping Tool setting and tells the shell. Async: the broadcast may wait on slow windows. |
 | `copy_image(path)` | `lib.rs` | Puts a PNG on the clipboard. In Rust because the file may sit outside every fs scope. |
 | `move_file(from, to)` | `lib.rs` | Rename, or copy + remove across drives (temp is on C:, the output folder may not be). |
 | `open_with(path)` | `lib.rs` | Windows' own "Open with" dialog (`rundll32 shell32.dll,OpenAs_RunDLL`). |
@@ -400,8 +426,10 @@ applies to the `main`, `overlay` and `shotbar` windows. Notable entries:
   `binaries/ffmpeg` sidecar, with `args: true`
 - `shell:allow-stdin-write` is what makes the clean `q` stop possible
 - `fs` access is scoped to the video and temp directories
-- `opener:allow-open-url` is limited to `https://github.com/*` and
-  `https://ko-fi.com/*`
+- `opener:allow-open-url` is limited to `https://github.com/*`,
+  `https://ko-fi.com/*` and `ms-settings:easeofaccess-keyboard`
+- `core:window:allow-center` re-centres `main` once its real height is known;
+  without it `center()` fails silently
 - `core:window:allow-set-content-protected` keeps the recording bar out of the
   video; `allow-set-always-on-top` and `allow-unminimize` bring it forward
 - `dialog:allow-save` for "Save to…", `autostart:*` for "Start with Windows"
@@ -507,6 +535,11 @@ elsewhere for review. Intermediate captures land in `scripts/promo/.shots/`
   recording bar content-protected.
 - **Measuring before render.** The overlay renders nothing until it knows its
   bounds, so an effect that measures the toolbar must re-run once it exists.
+- **Extended window styles.** tao rewrites `GWL_EXSTYLE` on `show()`, so a
+  style set before it is gone. Set it afterwards (see `tool_window`).
+- **Swallowed permission errors.** A window call without its capability
+  rejects, and a `.catch(() => {})` hides that. `center()` failed this way for
+  several releases.
 
 ## Licensing
 

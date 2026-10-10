@@ -27,7 +27,8 @@ done.
   the edge of the selection, so you never lose sight of what you are framing.
 - **Three formats.** MP4 (H.264), animated GIF, or a PNG screenshot.
 - **Print Screen and tray.** Print opens the area picker with Screenshot, Video
-  or GIF. The tray menu offers the same. rbox keeps running in the tray.
+  or GIF - rbox takes the key over from the Snipping Tool. The tray menu offers
+  the same. rbox keeps running in the tray.
 - **Screenshot menu.** After a screenshot a menu opens at the pointer: copy to
   clipboard, save, save to, save and open with.
 - **Delay.** 3, 5 or 10 seconds between confirming and capturing, with a
@@ -96,10 +97,14 @@ Choose **More info → Run anyway**, or build it yourself from source.
   <img src="docs/media/rbox-promo-3.png" alt="Press Print, drag a frame, pick what happens: copy, save, save to, or save and open with." width="900">
 </div>
 
-1. Turn on **Print Screen key** in the settings.
-2. Press Print and drag a frame. Screenshot is preselected; switch to Video or
-   GIF on the toolbar if you want to record.
-3. Press Enter. A screenshot opens the menu at the pointer:
+1. Turn on **Print Screen key** in the settings. This also switches off
+   Windows' own "Print screen key opens screen capture", so the key reaches
+   rbox instead of the Snipping Tool.
+2. Press Print and drag a frame. The panel steps aside into the tray, and the
+   compact toolbar waits at the top of the screen until you start dragging.
+   Screenshot is preselected; switch to Video or GIF with the icons on the
+   toolbar if you want to record.
+3. Press Enter or click **Capture**. A screenshot opens the menu at the pointer:
 
    | Entry | Result |
    | --- | --- |
@@ -122,7 +127,7 @@ from the tray menu. **Start with Windows** starts it straight into the tray.
 | Arrow keys | Nudge by 1 px |
 | Shift + arrows | Nudge by 10 px |
 | Enter | Confirm |
-| Esc | Cancel |
+| Esc or ✕ | Cancel |
 
 ### Good to know
 
@@ -133,7 +138,9 @@ from the tray menu. **Start with Windows** starts it straight into the tray.
 - Quitting mid-recording finishes the file first - it never leaves a broken MP4
   behind.
 - If another app already holds the Print key, rbox says so and turns the
-  **Print Screen key** switch back off.
+  **Print Screen key** switch back off. If the Snipping Tool still opens, the
+  link under the switch leads to the Windows setting.
+- Videos in your browser keep playing while you pick a region.
 
 <a id="build-from-source"></a>
 

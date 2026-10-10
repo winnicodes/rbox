@@ -14,6 +14,7 @@
     "core:webview:allow-create-webview-window",
     "core:window:allow-set-position",
     "core:window:allow-set-size",
+    "core:window:allow-center",
     "core:window:allow-set-always-on-top",
     "core:window:allow-set-content-protected",
     "core:window:allow-set-ignore-cursor-events",
@@ -66,7 +67,8 @@
       "identifier": "opener:allow-open-url",
       "allow": [
         { "url": "https://github.com/*" },
-        { "url": "https://ko-fi.com/*" }
+        { "url": "https://ko-fi.com/*" },
+        { "url": "ms-settings:easeofaccess-keyboard" }
       ]
     },
     {

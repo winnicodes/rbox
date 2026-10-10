@@ -25,7 +25,7 @@ export default function NumberField({ label, value, onChange, step = 1 }: Props)
   }
 
   return (
-    <label className="flex h-10 items-center gap-2 rounded-[10px] bg-white/6 px-3 text-sm text-zinc-400">
+    <label className="flex h-6.5 items-center gap-1.5 rounded-md bg-white/6 px-2 text-xs text-zinc-400">
       <span className="w-3 font-semibold uppercase">{label}</span>
       <input
         type="number"
@@ -46,7 +46,7 @@ export default function NumberField({ label, value, onChange, step = 1 }: Props)
           // Arrow keys belong to this input, not to the global nudge handler.
           e.stopPropagation();
         }}
-        className="w-14 bg-transparent text-[15px] tabular-nums text-zinc-50 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+        className="w-12 bg-transparent text-[13px] tabular-nums text-zinc-50 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
       />
     </label>
   );

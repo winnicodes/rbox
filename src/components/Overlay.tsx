@@ -3,12 +3,15 @@ import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { emitTo } from "@tauri-apps/api/event";
 import {
   ArrowDownUpIcon,
-  BookmarkIcon,
   CheckIcon,
   CircleIcon,
-  HashIcon,
+  FilmIcon,
+  ImageIcon,
   LinkIcon,
-  PencilRulerIcon,
+  ToggleLeftIcon,
+  ToggleRightIcon,
+  VideoIcon,
+  XIcon,
 } from "lucide-react";
 import NumberField from "@/components/NumberField";
 import { cn } from "@/lib/utils";
@@ -38,8 +41,8 @@ const CURSOR: Record<Dir, string> = {
 };
 
 const SIZE_PRESETS: { label: string; w: number; h: number }[] = [
-  { label: "1080p", w: 1920, h: 1080 },
   { label: "720p", w: 1280, h: 720 },
+  { label: "1080p", w: 1920, h: 1080 },
   { label: "Square", w: 1080, h: 1080 },
 ];
 
@@ -55,10 +58,10 @@ type Mode = "presets" | "numbers";
  * picking, starting on this format. */
 const QUICK = new URLSearchParams(location.search).get("quick") as Format | null;
 
-const QUICK_FORMATS: { format: Format; label: string }[] = [
-  { format: "png", label: "Screenshot" },
-  { format: "mp4", label: "Video" },
-  { format: "gif", label: "GIF" },
+const QUICK_FORMATS: { format: Format; label: string; Icon: typeof ImageIcon }[] = [
+  { format: "png", label: "Screenshot", Icon: ImageIcon },
+  { format: "mp4", label: "Video", Icon: VideoIcon },
+  { format: "gif", label: "GIF", Icon: FilmIcon },
 ];
 
 type Drag =
@@ -304,8 +307,9 @@ export default function Overlay() {
     ? toolbarBelow
       ? css.y + css.h + EDGE_GAP
       : Math.max(4, css.y - toolbar.h - EDGE_GAP)
-    : // No selection yet: centred under the hint, whose two lines are ~60 px tall.
-      hintBox.y + hintBox.h / 2 + 54;
+    : // No selection yet: top centre of the screen, like the Snipping Tool's
+      // bar, so it does not sit on what is about to be framed.
+      hintBox.y + EDGE_GAP;
   const toolbarLeft = css
     ? Math.min(Math.max(4, css.x), Math.max(4, viewW - toolbar.w - 4))
     : hintBox.x + (hintBox.w - toolbar.w) / 2;
@@ -355,6 +359,18 @@ export default function Overlay() {
     focusRing,
   );
   const chipOn = cn(chip, "bg-white/10 font-semibold text-zinc-50");
+  // Icon-only chips; their names live in title and aria-label.
+  const icon = cn(chip, "h-10 w-10 justify-center px-0");
+  const iconOn = cn(chipOn, "h-10 w-10 justify-center px-0");
+  // Size presets and the number fields share one look: a 2x2 block of pills.
+  const cell = cn(
+    "flex h-6.5 items-center justify-center rounded-md bg-white/6 px-2.5 text-xs whitespace-nowrap text-zinc-300 transition-colors hover:bg-white/12 hover:text-zinc-50",
+    focusRing,
+  );
+  const tiny = cn(
+    "flex size-6.5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:text-zinc-200",
+    focusRing,
+  );
 
   return (
     <div
@@ -385,33 +401,35 @@ export default function Overlay() {
           overlaps the selected area. */}
       <div
         ref={toolbarRef}
-        className="absolute z-20 flex items-center gap-3 rounded-[14px] bg-zinc-900/95 p-3 shadow-[0_20px_40px_-12px_rgba(0,0,0,.7)] ring-1 ring-white/10"
+        className="absolute z-20 flex items-center gap-1.5 rounded-[14px] bg-zinc-900/95 p-2 shadow-[0_20px_40px_-12px_rgba(0,0,0,.7)] ring-1 ring-white/10"
         style={{ left: toolbarLeft, top: toolbarTop }}
         onPointerDown={(e) => e.stopPropagation()}
       >
-        {mode === "presets" ? (
-          <>
+        {/* Presets and numbers share one grid cell; the hidden one keeps its
+            size, so switching never resizes the bar. */}
+        <div className="grid">
+          {/* Filled column by column: 720p over 1080p, Square over Full screen. */}
+          <div
+            className={cn(
+              "col-start-1 row-start-1 grid grid-flow-col grid-cols-2 grid-rows-2 gap-x-1 gap-y-2",
+              mode !== "presets" && "invisible",
+            )}
+          >
             {SIZE_PRESETS.map((p) => (
               <button
                 key={p.label}
                 type="button"
                 onClick={() => applyPreset(p.w, p.h)}
-                className={rect && rect.w === p.w && rect.h === p.h ? chipOn : chip}
+                className={cn(cell, rect && rect.w === p.w && rect.h === p.h && "bg-white/15 font-semibold text-zinc-50")}
               >
                 {p.label}
               </button>
             ))}
-            <button type="button" onClick={fullScreen} className={chip}>
+            <button type="button" onClick={fullScreen} className={cell}>
               Full screen
             </button>
-            <span className="mx-1 w-px self-stretch bg-white/15" />
-            <button type="button" onClick={() => setMode("numbers")} className={chip}>
-              <HashIcon className="size-4.25" />
-              Exact numbers
-            </button>
-          </>
-        ) : (
-          <>
+          </div>
+          <div className={cn("col-start-1 row-start-1 flex items-center gap-1", mode !== "numbers" && "invisible")}>
             <div className="flex flex-col gap-2">
               <NumberField label="X" value={rect?.x ?? 0} onChange={(x) => rect && setClamped({ ...rect, x })} />
               <NumberField label="Y" value={rect?.y ?? 0} onChange={(y) => rect && setClamped({ ...rect, y })} />
@@ -423,14 +441,15 @@ export default function Overlay() {
             <div className="flex items-stretch">
               <button
                 type="button"
+                title="Swap width and height"
                 aria-label="Swap width and height"
                 onClick={swap}
                 className={cn(
-                  "-mr-3.25 flex size-6.5 shrink-0 items-center justify-center self-center rounded text-zinc-500 hover:text-zinc-300",
+                  "relative z-10 -mr-3 flex size-6 shrink-0 items-center justify-center self-center rounded text-zinc-500 hover:text-zinc-300",
                   focusRing,
                 )}
               >
-                <ArrowDownUpIcon className="size-4.5" />
+                <ArrowDownUpIcon className="size-3.5" />
               </button>
               <Bracket side="left" on={ratio !== null} />
               <div className="flex flex-col gap-2">
@@ -440,30 +459,30 @@ export default function Overlay() {
               <Bracket side="right" on={ratio !== null} />
               <button
                 type="button"
+                title={ratio ? "Unlock aspect ratio" : "Lock aspect ratio"}
                 aria-label={ratio ? "Unlock aspect ratio" : "Lock aspect ratio"}
                 aria-pressed={ratio !== null}
                 onClick={toggleLock}
                 className={cn(
-                  "-ml-3.25 flex size-6.5 shrink-0 items-center justify-center self-center rounded",
+                  "relative z-10 -ml-3 flex size-6 shrink-0 items-center justify-center self-center rounded",
                   ratio ? "text-zinc-50" : "text-zinc-500 hover:text-zinc-300",
                   focusRing,
                 )}
               >
-                <LinkIcon className="size-4.5" />
+                <LinkIcon className="size-3.5" />
               </button>
             </div>
-
-            <span className="mx-1 w-px self-stretch bg-white/15" />
-            <button type="button" onClick={() => setMode("presets")} className={chip}>
-              <BookmarkIcon className="size-4.25" />
-              Presets
-            </button>
-            <button type="button" onClick={() => setRect(null)} className={chip}>
-              <PencilRulerIcon className="size-4.25" />
-              Redraw
-            </button>
-          </>
-        )}
+          </div>
+        </div>
+        <button
+          type="button"
+          title={mode === "numbers" ? "Size presets" : "Exact numbers"}
+          aria-label={mode === "numbers" ? "Size presets" : "Exact numbers"}
+          onClick={() => setMode(mode === "numbers" ? "presets" : "numbers")}
+          className={tiny}
+        >
+          {mode === "numbers" ? <ToggleRightIcon className="size-4.5" /> : <ToggleLeftIcon className="size-4.5" />}
+        </button>
 
         <span className="mx-1 w-px self-stretch bg-white/15" />
         {QUICK &&
@@ -471,11 +490,13 @@ export default function Overlay() {
             <button
               key={f.format}
               type="button"
+              title={f.label}
+              aria-label={f.label}
               aria-pressed={format === f.format}
               onClick={() => setFormat(f.format)}
-              className={format === f.format ? chipOn : chip}
+              className={format === f.format ? iconOn : icon}
             >
-              {f.label}
+              <f.Icon className="size-4.25" />
             </button>
           ))}
         <button
@@ -498,6 +519,9 @@ export default function Overlay() {
               Use area
             </>
           )}
+        </button>
+        <button type="button" aria-label="Cancel" title="Cancel (Esc)" onClick={() => void cancel()} className={icon}>
+          <XIcon className="size-4.25" />
         </button>
       </div>
 
@@ -583,15 +607,15 @@ function Bracket({ side, on }: { side: "left" | "right"; on: boolean }) {
   const bottom = side === "left" ? "rounded-bl-[6px]" : "rounded-br-[6px]";
   return (
     <div className="flex w-7 shrink-0 flex-col self-stretch">
-      {/* Half a NumberField (h-10), so the top arm starts level with the middle
-          of the W field instead of its top edge. */}
-      <div className="h-5 shrink-0" />
+      {/* Half a NumberField (h-6.5), so the top arm starts level with the
+          middle of the W field instead of its top edge. */}
+      <div className="h-3.25 shrink-0" />
       <div className={`h-2.25 shrink-0 border-t-2 ${edge} ${top} ${color}`} />
       <div className="flex-1" />
       <div className={`h-2.25 shrink-0 border-b-2 ${edge} ${bottom} ${color}`} />
       {/* Mirror of the top inset: the bottom arm ends level with the middle of
           the H field. */}
-      <div className="h-5 shrink-0" />
+      <div className="h-3.25 shrink-0" />
     </div>
   );
 }
