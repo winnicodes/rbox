@@ -13,6 +13,7 @@ want to record your screen, the [README](../README.md) is enough.
 - [System audio](#system-audio)
 - [Rust commands](#rust-commands)
 - [Settings and presets](#settings-and-presets)
+- [Translations](#translations)
 - [Window auto-sizing](#window-auto-sizing)
 - [Permissions](#permissions)
 - [Building installers](#building-installers)
@@ -48,6 +49,9 @@ src/
     DeviceSelect.tsx    microphone multi-select
     NumberField.tsx     numeric input used on the selection edges
     Segmented.tsx       small segmented control
+    Tip.tsx             hover labels, with a separate window for the compact bar
+    Marquee.tsx         scrolling text when a single-line label overflows
+    Flag.tsx            country flag for the language picker
     ui/                 shadcn components
   lib/
     geometry.ts         rectangle math, the coordinate rule
@@ -61,6 +65,9 @@ src/
     appKeys.ts          blocks browser shortcuts inside the webview
     version.ts          version compare for the update hint
     events.ts           event names shared between windows
+    i18n.ts             t(), language files
+    tipWindow.ts        click-through tooltip window for the compact bar
+lang/                   bundled language files (template for translators)
 src-tauri/
   src/lib.rs            Tauri setup, plugins, tray icon, small commands
   src/loopback.rs       WASAPI loopback capture -> TCP -> ffmpeg
@@ -111,7 +118,7 @@ on non-Windows platforms.
 
 ## Windows and processes
 
-rbox uses four webview windows, a tray icon and one child process.
+rbox uses five webview windows, a tray icon and one child process.
 
 | Window | File | Purpose |
 | --- | --- | --- |
@@ -119,6 +126,7 @@ rbox uses four webview windows, a tray icon and one child process.
 | `overlay` | `overlay.html` | Transparent, spans the whole virtual desktop. Used to pick a region. |
 | `frame` | `frame.html` | Click-through red ring around the region while recording, or the delay countdown. |
 | `shotbar` | `frame.html?pick` | Invisible 1 px window at the pointer that opens the screenshot menu. |
+| `tip` | `frame.html?tip` | Click-through tooltip window, created when a label does not fit in the compact bar. |
 
 Everything but `main` is created on demand from
 [`overlayWindow.ts`](../src/lib/overlayWindow.ts) and
@@ -196,6 +204,11 @@ the left click. The right-click menu is set from `App.tsx` with
 app and share its icons and, later, its translations.
 
 **Screenshot flow.**
+
+With `screenshotToClipboard` enabled, `start()` copies the temp PNG through
+`copy_image`, deletes it even if copying fails, and skips `showShotMenu()`.
+The setting is app-wide and off by default, so panel, Print Screen and tray
+captures all keep the menu unless the user opts in.
 
 1. The `screenshot` command grabs the region with GDI into a temp file
    (`tempShotPath()`). Not ffmpeg: starting a process for one frame made the
@@ -352,6 +365,7 @@ The Rust side is intentionally tiny.
 | `system_audio_start()` | `loopback.rs` | Starts loopback capture, returns `{ port, format, sampleRate, channels }`. |
 | `system_audio_stop()` | `loopback.rs` | Sets the stop flag for the capture thread. |
 | `screenshot(x, y, w, h, path)` | `lib.rs` | GDI `BitBlt` of a physical-pixel region, saved as PNG. |
+| `list_windows()` | `lib.rs` | Visible app windows as `[x, y, w, h]`, topmost first, for the picker's click-to-snap. DWM frame bounds (no invisible resize borders); skips rbox, minimized, cloaked, tool and untitled windows and the desktop. `windowAt()` in `geometry.ts` hit-tests them. |
 | `tool_window(label)` | `lib.rs` | Adds `WS_EX_TOOLWINDOW` to a window, so Chromium does not count it as covering what lies behind. |
 | `claim_print_screen()` | `lib.rs` | Turns off Windows' Print Screen -> Snipping Tool setting and tells the shell. Async: the broadcast may wait on slow windows. |
 | `copy_image(path)` | `lib.rs` | Puts a PNG on the clipboard. In Rust because the file may sit outside every fs scope. |
@@ -385,9 +399,33 @@ step there is.
 `presetFields()` returns the preset keys in a fixed order, so a JSON comparison
 can tell settings and presets apart.
 
-`printScreen` and `delay` are app-wide, not part of a preset. "Start with
+`printScreen`, `delay`, `language`, `compact`, `drawArea`, `closeToTray` and
+`screenshotToClipboard` are app-wide, not part of a preset. "Start with
 Windows" is not stored at all: the Run key is the truth, read with
 `isEnabled()` from `tauri-plugin-autostart`.
+
+## Translations
+
+[`i18n.ts`](../src/lib/i18n.ts): the English text is the key, `t("Start
+recording")`, so English needs no file and a missing translation falls back to
+it. `{name}` placeholders are filled from the second argument.
+
+A language file is `{ name, version, flag, strings }`; `flag` is an ISO 3166-1
+alpha-2 code (`"DE"`), drawn from `country-flag-icons` because Windows has no
+flag emoji. Files in `lang/` are bundled;
+files in `%APPDATA%\rbox\lang\` are the user's and win over a bundled
+one with the same id. `version` is the rbox version the strings were written
+for; Settings compares it with the app version.
+
+Every window is its own JS context, so each calls `loadLanguage()` before its
+first render: App's startup, `overlay.tsx`, `popShotMenu()`. Switching language
+loads the file first, then updates settings, so the re-render shows the new
+strings.
+
+`i18n.test.ts` fails when a `lang/*.json` misses a `t()` key, keeps a stale one,
+or carries another version than `package.json`. Labels kept in constants
+(quality, size presets, screenshot menu) reach `t()` as variables and are not
+found as keys - translate them by hand.
 
 ## Window auto-sizing
 
@@ -406,6 +444,17 @@ While recording, the panel becomes a small draggable bar sized to its content
 is remembered and restored afterwards, so it does not inherit wherever the bar
 was parked.
 
+Compact mode also sizes the window to one row and keeps it on top. `drawArea`
+chooses between the saved frame and opening the quick picker; cancelling the
+picker brings the bar back. Settings use a sidebar with Recording, Video, GIF,
+Screenshot, Audio, System and Language sections at the normal 480 px width.
+Recording holds the shared output folder and delay; Screenshot holds the direct
+clipboard option. System only contains Print Screen, autostart and close-to-tray.
+
+Tooltips normally stay inside the current window. When neither side fits,
+`tipWindow.ts` shows the label in `frame.html?tip`. That window stays shown but
+empty between labels to avoid WebView2 focus and shadow flicker.
+
 The startup splash renders inside the **same** `<main>` element as the panel.
 `fit()` observes that element; swapping it for another one would leave the
 observers watching a detached node.
@@ -420,12 +469,13 @@ handler, which would otherwise hand reload and print back to the webview.
 ## Permissions
 
 [`src-tauri/capabilities/default.json`](../src-tauri/capabilities/default.json)
-applies to the `main`, `overlay` and `shotbar` windows. Notable entries:
+applies to the `main`, `overlay`, `shotbar` and `tip` windows. Notable entries:
 
 - `shell:allow-execute` and `shell:allow-spawn` are restricted to the
   `binaries/ffmpeg` sidecar, with `args: true`
 - `shell:allow-stdin-write` is what makes the clean `q` stop possible
 - `fs` access is scoped to the video and temp directories
+- Language files can also be read under `$DATA/rbox/**`
 - `opener:allow-open-url` is limited to `https://github.com/*`,
   `https://ko-fi.com/*` and `ms-settings:easeofaccess-keyboard`
 - `core:window:allow-center` re-centres `main` once its real height is known;
@@ -489,12 +539,13 @@ covers the parts where a silent mistake is expensive:
 | `settings.test.ts` | preset field selection and live syncing |
 | `ffmpeg.test.ts` | input order and `-map` arguments for every audio combination |
 | `version.test.ts` | version comparison for the update hint |
+| `i18n.test.ts` | complete translation keys, no stale keys, current app version |
 | `loopback.rs` | socket pacing keeps whole frames and lags the clock |
 
 ## Promo images
 
-`rbox-promo-2.png`, `rbox-promo-3.png`, `demo.gif` and `demo.mp4` are rendered
-from the **real UI** in a browser.
+`rbox-promo-2.png`, `rbox-promo-3.png`, `demo.gif`, `demo.mp4` and
+`compact.gif` are rendered from the **real UI** in a browser.
 [`scripts/promo/mock.ts`](../scripts/promo/mock.ts) answers the Tauri IPC with
 `mockIPC` / `mockWindows`; only the two native Windows menus are drawn by hand
 in `promo.tsx`. `rbox-promo-1.png` is not generated.
@@ -503,10 +554,17 @@ in `promo.tsx`. `rbox-promo-1.png` is not generated.
 npx vite    # dev server on :1420
 node <browser-automation>/browser.mjs http://localhost:1420/scripts/promo/promo.html --script scripts/promo/shoot.mjs
 node <browser-automation>/browser.mjs http://localhost:1420/scripts/promo/overlay.html --script scripts/promo/demo.mjs
+node <browser-automation>/browser.mjs "http://localhost:1420/scripts/promo/promo.html?n=compact" --script scripts/promo/compact.mjs
 ```
 
-`shoot.mjs` writes the two PNGs; `demo.mjs` captures the overlay frame by frame
-and encodes GIF and MP4 with the project's ffmpeg sidecar. `OUT=<dir>` writes
+The runner only has to open the URL in Chromium and call the script's default
+export with the Playwright `page`; `playwright-core` with
+`chromium.launch({ channel: "msedge" })` does it without downloading a browser.
+
+`shoot.mjs` writes the two PNGs. `demo.mjs` (drag a frame, then click a window -
+`mock.ts` reports the stand-in window from `list_windows`) and `compact.mjs`
+(panel to compact bar and back) record frame by frame through `frames.mjs` and
+encode with the project's ffmpeg sidecar. `OUT=<dir>` writes
 elsewhere for review. Intermediate captures land in `scripts/promo/.shots/`
 (git-ignored). Headless screenshots carry no pointer, so the demo draws one.
 

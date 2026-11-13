@@ -173,3 +173,22 @@ export function barPosition(
     below + bar.h <= mon.y + mon.h ? below : above >= mon.y ? above : rect.y + rect.h - bar.h - gap;
   return { x: Math.round(x), y: Math.round(y) };
 }
+
+/**
+ * The topmost window under a point (physical px), clipped to the monitor there:
+ * a window pushed half off screen gives its visible part, not a shifted frame.
+ * `windows` is in z-order, topmost first.
+ *
+ * ponytail: a window spanning two monitors is clipped to the one clicked.
+ */
+export function windowAt(windows: Rect[], monitors: MonitorInfo[], x: number, y: number): Rect | null {
+  const inside = (r: Rect) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+  const win = windows.find(inside);
+  const mon = monitors.find(inside);
+  if (!win || !mon) return null;
+  const left = Math.max(win.x, mon.x);
+  const top = Math.max(win.y, mon.y);
+  const right = Math.min(win.x + win.w, mon.x + mon.w);
+  const bottom = Math.min(win.y + win.h, mon.y + mon.h);
+  return { x: left, y: top, w: right - left, h: bottom - top };
+}

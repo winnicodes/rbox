@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { emitTo } from "@tauri-apps/api/event";
 import {
@@ -15,6 +16,8 @@ import {
 } from "lucide-react";
 import NumberField from "@/components/NumberField";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
+import Tip from "@/components/Tip";
 import { QUICK_CAPTURE, REGION_CANCELLED, REGION_PICKED } from "@/lib/events";
 import { listMonitors } from "@/lib/monitors";
 import { loadSettings, saveSettings, type Format } from "@/lib/settings";
@@ -25,6 +28,7 @@ import {
   monitorOfRect,
   physicalToCss,
   rectFromPoints,
+  windowAt,
   type MonitorInfo,
   type Rect,
 } from "@/lib/geometry";
@@ -128,19 +132,26 @@ export default function Overlay() {
   const drag = useRef<Drag | null>(null);
   const [dragging, setDragging] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
+  /** App windows to snap to, topmost first, taken when the overlay opened. */
+  const [windows, setWindows] = useState<Rect[]>([]);
+  /** The window under the pointer while nothing is selected. */
+  const [hover, setHover] = useState<Rect | null>(null);
   /** Quick mode only. Print Screen always starts on Screenshot. */
   const [format, setFormat] = useState<Format>(QUICK ?? "png");
 
   useEffect(() => {
     (async () => {
       const win = getCurrentWindow();
-      const [pos, size, mons, cursor] = await Promise.all([
+      const [pos, size, mons, cursor, wins] = await Promise.all([
         win.outerPosition(),
         win.innerSize(),
         listMonitors(),
         // Physical pixels, same space as the monitors — no conversion needed.
         cursorPosition().catch(() => null),
+        // Nothing moves behind the overlay, so one snapshot holds.
+        invoke<[number, number, number, number][]>("list_windows").catch(() => []),
       ]);
+      setWindows(wins.map(([x, y, w, h]) => ({ x, y, w, h })));
 
       // The window's real geometry is the ground truth, not what we asked for.
       const b: Rect = { x: pos.x, y: pos.y, w: size.width, h: size.height };
@@ -182,8 +193,12 @@ export default function Overlay() {
   useEffect(() => {
     function onMove(e: PointerEvent) {
       const d = drag.current;
-      if (!d) return;
       const p = toPhys(e);
+      if (!d) {
+        const w = windowAt(windows, monitors, p.x, p.y);
+        setHover((prev) => (JSON.stringify(prev) === JSON.stringify(w) ? prev : w));
+        return;
+      }
       if (d.kind === "new") {
         let r = rectFromPoints(d.anchor.x, d.anchor.y, p.x, p.y);
         if (ratio) r = { ...r, h: Math.max(MIN, Math.round(r.w / ratio)) };
@@ -198,10 +213,17 @@ export default function Overlay() {
         setClamped(resizeRect(d.start, d.dir, p.x - d.from.x, p.y - d.from.y, ratio));
       }
     }
-    function onUp() {
-      if (!drag.current) return;
+    function onUp(e: PointerEvent) {
+      const d = drag.current;
+      if (!d) return;
       drag.current = null;
       setDragging(false);
+      // A click rather than a drag: take the window under it.
+      if (d.kind !== "new") return;
+      const p = toPhys(e);
+      if (Math.hypot(p.x - d.anchor.x, p.y - d.anchor.y) > 4 * dpr) return;
+      const w = windowAt(windows, monitors, d.anchor.x, d.anchor.y);
+      if (w) setRect(evenRect(w));
     }
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -211,7 +233,7 @@ export default function Overlay() {
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [toPhys, setClamped, ratio]);
+  }, [toPhys, setClamped, ratio, windows, monitors, dpr]);
 
   const cancel = useCallback(async () => {
     await emitTo("main", REGION_CANCELLED, null);
@@ -283,7 +305,7 @@ export default function Overlay() {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-black/70 p-8">
         <pre className="max-w-3xl whitespace-pre-wrap rounded-md bg-zinc-900 p-4 text-sm text-red-300 ring-1 ring-red-500/40">
-          {`The overlay could not start:\n${initError}`}
+          {`${t("The overlay could not start:")}\n${initError}`}
         </pre>
       </div>
     );
@@ -355,11 +377,11 @@ export default function Overlay() {
   // out here rather than reusing the app's ring colour.
   const focusRing = "outline-none focus-visible:ring-2 focus-visible:ring-white/70";
   const chip = cn(
-    "flex h-11 items-center gap-2 rounded-[10px] px-4 text-[15px] whitespace-nowrap text-zinc-400 transition-colors hover:text-zinc-50",
+    "relative flex h-11 items-center gap-2 rounded-[10px] px-4 text-[15px] whitespace-nowrap text-zinc-400 transition-colors hover:text-zinc-50",
     focusRing,
   );
   const chipOn = cn(chip, "bg-white/10 font-semibold text-zinc-50");
-  // Icon-only chips; their names live in title and aria-label.
+  // Icon-only chips; their names live in a Tip and aria-label.
   const icon = cn(chip, "h-10 w-10 justify-center px-0");
   const iconOn = cn(chipOn, "h-10 w-10 justify-center px-0");
   // Size presets and the number fields share one look: a 2x2 block of pills.
@@ -368,7 +390,7 @@ export default function Overlay() {
     focusRing,
   );
   const tiny = cn(
-    "flex size-6.5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:text-zinc-200",
+    "relative flex size-6.5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:text-zinc-200",
     focusRing,
   );
 
@@ -394,6 +416,17 @@ export default function Overlay() {
       ) : (
         <div className="absolute inset-0 bg-black/50" />
       )}
+
+      {/* Click to take this window; drag to draw a frame as before. */}
+      {!rect && !dragging && hover && (() => {
+        const h = physicalToCss(hover, bounds, dpr);
+        return (
+          <div
+            className="pointer-events-none absolute bg-white/10 outline-2 -outline-offset-2 outline-white/80"
+            style={{ left: h.x, top: h.y, width: h.w, height: h.h }}
+          />
+        );
+      })()}
 
       {/* toolbar ---------------------------------------------------------
           z-20: the selection is rendered after this and would otherwise sit on
@@ -422,11 +455,11 @@ export default function Overlay() {
                 onClick={() => applyPreset(p.w, p.h)}
                 className={cn(cell, rect && rect.w === p.w && rect.h === p.h && "bg-white/15 font-semibold text-zinc-50")}
               >
-                {p.label}
+                {t(p.label)}
               </button>
             ))}
             <button type="button" onClick={fullScreen} className={cell}>
-              Full screen
+              {t("Full screen")}
             </button>
           </div>
           <div className={cn("col-start-1 row-start-1 flex items-center gap-1", mode !== "numbers" && "invisible")}>
@@ -441,8 +474,7 @@ export default function Overlay() {
             <div className="flex items-stretch">
               <button
                 type="button"
-                title="Swap width and height"
-                aria-label="Swap width and height"
+                aria-label={t("Swap width and height")}
                 onClick={swap}
                 className={cn(
                   "relative z-10 -mr-3 flex size-6 shrink-0 items-center justify-center self-center rounded text-zinc-500 hover:text-zinc-300",
@@ -450,6 +482,7 @@ export default function Overlay() {
                 )}
               >
                 <ArrowDownUpIcon className="size-3.5" />
+                <Tip>{t("Swap width and height")}</Tip>
               </button>
               <Bracket side="left" on={ratio !== null} />
               <div className="flex flex-col gap-2">
@@ -459,8 +492,7 @@ export default function Overlay() {
               <Bracket side="right" on={ratio !== null} />
               <button
                 type="button"
-                title={ratio ? "Unlock aspect ratio" : "Lock aspect ratio"}
-                aria-label={ratio ? "Unlock aspect ratio" : "Lock aspect ratio"}
+                aria-label={ratio ? t("Unlock aspect ratio") : t("Lock aspect ratio")}
                 aria-pressed={ratio !== null}
                 onClick={toggleLock}
                 className={cn(
@@ -470,18 +502,19 @@ export default function Overlay() {
                 )}
               >
                 <LinkIcon className="size-3.5" />
+                <Tip>{ratio ? t("Unlock aspect ratio") : t("Lock aspect ratio")}</Tip>
               </button>
             </div>
           </div>
         </div>
         <button
           type="button"
-          title={mode === "numbers" ? "Size presets" : "Exact numbers"}
-          aria-label={mode === "numbers" ? "Size presets" : "Exact numbers"}
+          aria-label={mode === "numbers" ? t("Size presets") : t("Exact numbers")}
           onClick={() => setMode(mode === "numbers" ? "presets" : "numbers")}
           className={tiny}
         >
           {mode === "numbers" ? <ToggleRightIcon className="size-4.5" /> : <ToggleLeftIcon className="size-4.5" />}
+          <Tip>{mode === "numbers" ? t("Size presets") : t("Exact numbers")}</Tip>
         </button>
 
         <span className="mx-1 w-px self-stretch bg-white/15" />
@@ -490,13 +523,13 @@ export default function Overlay() {
             <button
               key={f.format}
               type="button"
-              title={f.label}
-              aria-label={f.label}
+              aria-label={t(f.label)}
               aria-pressed={format === f.format}
               onClick={() => setFormat(f.format)}
               className={format === f.format ? iconOn : icon}
             >
               <f.Icon className="size-4.25" />
+              <Tip>{t(f.label)}</Tip>
             </button>
           ))}
         <button
@@ -511,17 +544,18 @@ export default function Overlay() {
           {QUICK ? (
             <>
               <CircleIcon className="size-3.5 fill-red-500 text-red-500" />
-              {format === "png" ? "Capture" : "Record"}
+              {format === "png" ? t("Capture") : t("Record")}
             </>
           ) : (
             <>
               <CheckIcon className="size-4.25" />
-              Use area
+              {t("Use area")}
             </>
           )}
         </button>
-        <button type="button" aria-label="Cancel" title="Cancel (Esc)" onClick={() => void cancel()} className={icon}>
+        <button type="button" aria-label={t("Cancel")} onClick={() => void cancel()} className={icon}>
           <XIcon className="size-4.25" />
+          <Tip>{t("Cancel (Esc)")}</Tip>
         </button>
       </div>
 
@@ -532,9 +566,9 @@ export default function Overlay() {
         >
           <div className="flex flex-col items-center gap-3 text-center">
             <span className="text-xl font-semibold text-white">
-              Drag a frame around what you want
+              {t("Drag a frame or click a window")}
             </span>
-            <span className="text-sm text-white/60">Esc cancels · Enter confirms</span>
+            <span className="text-sm text-white/60">{t("Esc cancels · Enter confirms")}</span>
           </div>
         </div>
       )}
@@ -586,7 +620,7 @@ export default function Overlay() {
           bottom: viewH - (hintBox.y + hintBox.h) + 14,
         }}
       >
-        Arrow keys nudge · Shift for 10 px · Esc cancels
+        {t("Arrow keys nudge · Shift for 10 px · Esc cancels")}
       </div>
     </div>
   );

@@ -12,6 +12,8 @@ import { emitTo } from "@tauri-apps/api/event";
 import { IconMenuItem, Menu, PredefinedMenuItem } from "@tauri-apps/api/menu";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { SHOT_ACTION } from "./events";
+import { loadLanguage, t } from "./i18n";
+import { loadSettings } from "./settings";
 
 const ITEMS: [string, string, LucideIcon][] = [
   ["copy", "Copy to clipboard", ClipboardCopyIcon],
@@ -47,7 +49,7 @@ export async function popShotMenu(): Promise<void> {
   const win = getCurrentWindow();
   const choose = async (act: string) => {
     await emitTo("main", SHOT_ACTION, act);
-    const text = CONFIRM[act];
+    const text = CONFIRM[act] && t(CONFIRM[act]);
     if (text) {
       // The 1 px window grows into a short confirmation where the menu was.
       const el = document.getElementById("msg")!;
@@ -59,9 +61,10 @@ export async function popShotMenu(): Promise<void> {
     }
     await win.close();
   };
+  await loadLanguage(loadSettings().language);
   const items = await Promise.all(
     ITEMS.map(async ([id, text, icon]) =>
-      IconMenuItem.new({ id, text, icon: await menuIcon(icon), action: () => void choose(id) }),
+      IconMenuItem.new({ id, text: t(text), icon: await menuIcon(icon), action: () => void choose(id) }),
     ),
   );
   // Close sits apart, under a separator.

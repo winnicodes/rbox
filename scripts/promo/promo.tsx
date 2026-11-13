@@ -18,6 +18,7 @@ import {
 import App from "../../src/App";
 import logo from "../../src/assets/logo.svg";
 import { installMocks } from "./mock";
+import { cn } from "../../src/lib/utils";
 import "../../src/index.css";
 
 installMocks("main");
@@ -44,12 +45,27 @@ function Label({ children }: { children: string }) {
   return <div className="mb-3 text-[18px] text-white/55">{children}</div>;
 }
 
+/**
+ * Window rules for the promo pages. The compact bar is 480 px only while it is
+ * the panel (the bar is `w-fit`) and rounds itself, as its Win does not clip -
+ * its tooltips sit outside it. Settings show their own height here, not the
+ * panel's, so the compact bar fits under them.
+ */
+const RULES = `
+  [data-win=compact] main:not(.w-fit) { width: 480px }
+  [data-win=compact] main { border-radius: 13px }
+  [data-win=settings] main { min-height: 0 !important }
+`;
+
 /** A window of the real app. `width` is the window width the app expects. */
-function Win({ width, id }: { width?: number; id: string }) {
+function Win({ width, id, clip = true }: { width?: number; id: string; clip?: boolean }) {
   return (
     <div
       data-win={id}
-      className="w-fit overflow-hidden rounded-[16px] ring-1 ring-white/10 shadow-[0_30px_60px_-20px_rgba(0,0,0,.8)]"
+      className={cn(
+        "w-fit rounded-[16px] ring-1 ring-white/10 shadow-[0_30px_60px_-20px_rgba(0,0,0,.8)]",
+        clip && "overflow-hidden",
+      )}
       style={{ zoom: ZOOM }}
     >
       <div style={{ width }}>
@@ -107,7 +123,8 @@ const SHOT: Entry[] = [
 function Promo2() {
   return (
     <>
-      <Header title="The whole app: one panel, one settings page, a tray icon" />
+      <style>{RULES}</style>
+      <Header title="The whole app: one panel, a compact bar, settings and a tray icon" />
       <div className="mt-14 flex gap-11">
         <div className="flex flex-col">
           <Label>Main panel</Label>
@@ -119,7 +136,11 @@ function Promo2() {
         </div>
         <div className="flex flex-col">
           <Label>Settings</Label>
-          <Win id="settings" width={620} />
+          <Win id="settings" width={480} />
+          <div className="mt-10">
+            <Label>Compact bar: always on top, one click away</Label>
+            <Win id="compact" clip={false} />
+          </div>
         </div>
         <div className="flex flex-col gap-10">
           <div>
@@ -194,7 +215,7 @@ function Promo3() {
             Print
           </kbd>
         </Step>
-        <Step n={2} width={780} title="Drag a frame" sub="Screenshot is preselected. Switch to Video or GIF right on the toolbar.">
+        <Step n={2} width={780} title="Drag a frame" sub="Or click a window to take it exactly. Switch to Video or GIF right on the toolbar.">
           <OverlayCrop />
         </Step>
         <Step n={3} width={440} title="Pick what happens" sub="Copy it, save it, or save and open it in your editor.">
@@ -205,13 +226,50 @@ function Promo3() {
   );
 }
 
+/**
+ * For compact.mjs: the panel alone, with a drawn pointer (headless shots have
+ * none). 480 px only while it is the panel; the compact bar is `w-fit`.
+ */
+function CompactDemo() {
+  const [at, setAt] = React.useState<{ x: number; y: number } | null>(null);
+  React.useEffect(() => {
+    const move = (e: PointerEvent) => setAt({ x: e.clientX, y: e.clientY });
+    addEventListener("pointermove", move);
+    return () => removeEventListener("pointermove", move);
+  }, []);
+  return (
+    <div
+      className="flex h-screen w-screen items-center justify-center font-sans"
+      style={{ background: "linear-gradient(120deg, #2e3748 0%, #1f2532 45%, #0f1319 100%)" }}
+    >
+      <style>{RULES}</style>
+      <Win id="compact" clip={false} />
+      {at && (
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 24 24"
+          className="pointer-events-none fixed top-0 left-0 z-[100]"
+          style={{ transform: `translate(${at.x - 4}px, ${at.y - 2}px)` }}
+        >
+          <path d="M4 2.5 19.5 13l-7 1.2L9 20.5z" fill="#fff" stroke="#111" strokeWidth="1.5" strokeLinejoin="round" />
+        </svg>
+      )}
+    </div>
+  );
+}
+
 const page = new URLSearchParams(location.search).get("n");
 ReactDOM.createRoot(document.getElementById("root")!).render(
+  page === "compact" ? (
+    <CompactDemo />
+  ) : (
   <div
     className="h-[1080px] w-[1920px] overflow-hidden px-[110px] pt-[80px] font-sans"
     // Same slate gradient as rbox-promo-1.png.
     style={{ background: "linear-gradient(120deg, #2e3748 0%, #1f2532 45%, #0f1319 100%)" }}
   >
     {page === "3" ? <Promo3 /> : <Promo2 />}
-  </div>,
+  </div>
+  ),
 );

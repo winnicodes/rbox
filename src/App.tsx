@@ -19,26 +19,34 @@ import { IconMenuItem, Menu, PredefinedMenuItem } from "@tauri-apps/api/menu";
 import { TrayIcon } from "@tauri-apps/api/tray";
 import { toast } from "sonner";
 import { isNewer } from "@/lib/version";
+import { langDir, listLanguages, loadLanguage, t, type LangInfo } from "@/lib/i18n";
 import {
   AppWindowIcon,
   ArrowUpCircleIcon,
-  CheckIcon,
+  ArrowUpRightIcon,
+  BookOpenIcon,
   ChevronLeftIcon,
   CoffeeIcon,
   CropIcon,
   EyeIcon,
   EyeOffIcon,
+  Maximize2Icon,
   FilmIcon,
   FolderIcon,
   ImageIcon,
+  InfoIcon,
+  LanguagesIcon,
   LoaderIcon,
   MicIcon,
   MicOffIcon,
   MinusIcon,
   MonitorIcon,
   PencilIcon,
+  PinIcon,
   PowerIcon,
   SettingsIcon,
+  SquareDashedMousePointerIcon,
+  Minimize2Icon,
   VideoIcon,
   Volume2Icon,
   VolumeOffIcon,
@@ -61,9 +69,12 @@ import {
 import PresetTray, { PresetBanner } from "@/components/PresetTray";
 import Segmented, { SEGMENT, SEGMENT_OFF, SEGMENT_ON } from "@/components/Segmented";
 import DeviceSelect, { shortDeviceName } from "@/components/DeviceSelect";
+import Tip from "@/components/Tip";
+import Flag from "@/components/Flag";
+import Marquee from "@/components/Marquee";
 
 import { cn } from "@/lib/utils";
-import { QUICK_CAPTURE, REGION_PICKED, SHOT_ACTION } from "@/lib/events";
+import { QUICK_CAPTURE, REGION_CANCELLED, REGION_PICKED, SHOT_ACTION } from "@/lib/events";
 import { menuIcon } from "@/lib/shotMenu";
 import { listMonitors } from "@/lib/monitors";
 import { openOverlay } from "@/lib/overlayWindow";
@@ -106,10 +117,22 @@ const REPO_URL = "https://github.com/winnicodes/rbox";
 /** Where the newest tag is published. Public data, no token needed. */
 const RELEASES_API = "https://api.github.com/repos/winnicodes/rbox/releases/latest";
 const KOFI_URL = "https://ko-fi.com/winnicodes";
+const LANG_DOCS_URL = `${REPO_URL}/blob/main/docs/translations.md`;
 /** "Use the Print screen key to open screen capture". */
 const PRINT_KEY_SETTINGS = "ms-settings:easeofaccess-keyboard";
 const LOW_SPACE_BYTES = 500 * 1024 * 1024;
 const DELAY_CHOICES = [0, 3, 5, 10];
+/** The compact bar's format switch. */
+const COMPACT_FORMATS: [Format, string, LucideIcon][] = [
+  ["mp4", "Video", VideoIcon],
+  ["gif", "GIF", FilmIcon],
+  ["png", "Screenshot", ImageIcon],
+];
+/** Compact bar: Record lets you draw an area, or uses the saved one. */
+const AREA_MODES: [boolean, string, LucideIcon][] = [
+  [true, "Draw an area", SquareDashedMousePointerIcon],
+  [false, "Use the saved area", PinIcon],
+];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -120,13 +143,11 @@ async function surface() {
   await win.show().catch(() => {});
 }
 
-/** The panel's fixed width. Its height follows the content — see fit(). */
+/** The panel's fixed width, settings included. Its height follows the content — see fit(). */
 const WIDTH_MAIN = 480;
-/** Two columns of settings. */
-const WIDTH_SETTINGS = 620;
 
 /** Out-of-flow layers the window has to make room for. */
-const POPUPS = '[data-popup], [data-slot="select-content"]';
+const POPUPS = '[data-popup], [data-slot="select-content"], [data-sonner-toast]';
 
 /** lucide dropped its brand icons, so the GitHub mark rides along as a path. */
 function GithubMark({ className }: { className?: string }) {
@@ -153,7 +174,7 @@ function formatDuration(ms: number): string {
 
 /** GIF width as shown to the user; 0 means the region's own width. */
 function gifSize(w: number): string {
-  return w ? `${w} px` : "Original";
+  return w ? `${w} px` : t("Original");
 }
 
 /**
@@ -161,7 +182,7 @@ function gifSize(w: number): string {
  * three formats, because the format itself is not part of a preset.
  */
 function presetSummary(p: Preset): string {
-  const how = `${p.fps} fps · ${QUALITY_LABELS[p.quality].toLowerCase()} · gif ${gifSize(p.gifWidth)}`;
+  const how = `${p.fps} fps · ${t(QUALITY_LABELS[p.quality]).toLowerCase()} · gif ${gifSize(p.gifWidth)}`;
   // A remembered area is the one thing that changes what gets recorded, so it
   // leads the line.
   return p.area ? `${p.area.rect.w} × ${p.area.rect.h} · ${how}` : how;
@@ -185,6 +206,8 @@ export default function App() {
   const [preview, setPreview] = useState(false);
 
   const rootRef = useRef<HTMLElement>(null);
+  /** The main view's height when the settings opened; their minimum. */
+  const panelHeight = useRef(0);
   const monitorsRef = useRef<MonitorInfo[]>([]);
   const recording = useRef<Recording | null>(null);
   const videoPath = useRef<string | null>(null);
@@ -193,6 +216,8 @@ export default function App() {
   const lastMics = useRef<string[]>([]);
   /** Latched for as long as start() runs, so one click starts one recording. */
   const starting = useRef(false);
+  /** The compact bar opened the quick overlay: show the bar again when that ends. */
+  const backToBar = useRef(false);
   /** The screenshot waiting in temp for the shot bar's choice. */
   const pendingShot = useRef<string | null>(null);
   /** Where the panel stood before the recording bar took over. */
@@ -221,6 +246,7 @@ export default function App() {
   // --- startup -------------------------------------------------------------
   useEffect(() => {
     (async () => {
+      await loadLanguage(settings.language);
       setDefaultDir(await defaultOutDir().catch(() => ""));
       const version = await getVersion().catch(() => "");
       setAppVersion(version);
@@ -240,7 +266,7 @@ export default function App() {
         // Only a presence check — the version string itself is not shown.
         await ffmpegVersion();
       } catch (e) {
-        toast.error("ffmpeg not found", { description: String(e) });
+        toast.error(t("ffmpeg not found"), { description: String(e) });
       }
       const mons = await listMonitors().catch(() => []);
       setMonitors(mons);
@@ -338,15 +364,18 @@ export default function App() {
   // and the stop button.
   useEffect(() => {
     widthRef.current =
-      status === "recording" ? null : view === "settings" ? WIDTH_SETTINGS : WIDTH_MAIN;
+      status === "recording" || (settings.compact && view === "main") ? null : WIDTH_MAIN;
     fitRef.current();
     // The bar is a window of its own to drag around; the panel should not
     // inherit wherever it was parked, so it goes back where it stood.
     const win = getCurrentWindow();
     // While recording the bar floats above everything (Print Screen may start
     // it with other apps in front) and stays out of the video. Protection is
-    // switched on in start(), before ffmpeg grabs its first frame.
-    void win.setAlwaysOnTop(status === "recording").catch(() => {});
+    // switched on in start(), before ffmpeg grabs its first frame. The compact
+    // bar is a tool palette and stays on top too.
+    void win
+      .setAlwaysOnTop(status === "recording" || (settings.compact && view === "main"))
+      .catch(() => {});
     if (status !== "recording") void win.setContentProtected(false).catch(() => {});
     if (status === "recording") {
       void win
@@ -369,7 +398,7 @@ export default function App() {
       posBeforeBar.current = null;
       void win.setPosition(back).catch(() => {});
     }
-  }, [status, view]);
+  }, [status, view, settings.compact]);
 
   // Frame preview. Driven by an effect rather than by the click handler, so the
   // ring follows a region that changes after it was switched on. While
@@ -424,8 +453,8 @@ export default function App() {
     // off, so it never claims a key rbox does not have.
     reg.catch((e) => {
       update({ printScreen: false });
-      if (/already registered/i.test(String(e))) toast.error("Print Screen is used by another app");
-      else toast.error("Print Screen unavailable", { description: String(e) });
+      if (/already registered/i.test(String(e))) toast.error(t("Print Screen is used by another app"));
+      else toast.error(t("Print Screen unavailable"), { description: String(e) });
     });
     return () => {
       keyChain.current = reg.then(() => unregisterShortcut("PrintScreen")).catch(() => {});
@@ -446,7 +475,7 @@ export default function App() {
       await remove(source).catch(() => {});
       await revealItemInDir(gifPath).catch(() => {});
     } catch (e) {
-      toast.error("GIF conversion failed", { description: String(e) });
+      toast.error(t("GIF conversion failed"), { description: String(e) });
     }
   }, []);
 
@@ -461,7 +490,7 @@ export default function App() {
       setStatus("idle");
       if (source) await finish(source);
     } catch (e) {
-      toast.error("Recording failed", { description: String(e) });
+      toast.error(t("Recording failed"), { description: String(e) });
     } finally {
       setStatus("idle");
       videoPath.current = null;
@@ -479,14 +508,14 @@ export default function App() {
     try {
       const s = { ...loadSettings(), ...over };
       if (!s.rect) {
-        toast.error("No area selected");
+        toast.error(t("No area selected"));
         return;
       }
 
       const dir = s.outDir ?? (await defaultOutDir());
       const free = await invoke<number | null>("free_space", { path: dir }).catch(() => null);
       if (free !== null && free < LOW_SPACE_BYTES) {
-        toast.error("Not enough disk space", { description: `${formatBytes(free)} free` });
+        toast.error(t("Not enough disk space"), { description: t("{size} free", { size: formatBytes(free) }) });
         return;
       }
 
@@ -505,13 +534,23 @@ export default function App() {
           await invoke("screenshot", { ...s.rect, path: shot });
           // A shot nobody chose for is replaced, not kept.
           if (pendingShot.current) await remove(pendingShot.current).catch(() => {});
-          pendingShot.current = shot;
+          pendingShot.current = null;
           await hideFrame().catch(() => {});
-          await showShotMenu();
+          if (s.screenshotToClipboard) {
+            try {
+              await invoke("copy_image", { path: shot });
+              toast.success(t("Copied to clipboard"));
+            } finally {
+              await remove(shot).catch(() => {});
+            }
+          } else {
+            pendingShot.current = shot;
+            await showShotMenu();
+          }
         } catch (e) {
           await hideFrame().catch(() => {});
           await surface();
-          toast.error("Screenshot failed", { description: String(e) });
+          toast.error(t("Screenshot failed"), { description: String(e) });
         }
         return;
       }
@@ -541,7 +580,7 @@ export default function App() {
         await getCurrentWindow().setContentProtected(false).catch(() => {});
         await hideFrame().catch(() => {});
         await surface();
-        toast.error("Could not start", { description: String(e) });
+        toast.error(t("Could not start"), { description: String(e) });
       }
     } finally {
       starting.current = false;
@@ -554,10 +593,20 @@ export default function App() {
     const un = listen<{ rect: Rect; format: Format }>(QUICK_CAPTURE, (e) => {
       const { rect, format } = e.payload;
       update({ rect, format, monitorName: monitorOfRect(monitorsRef.current, rect)?.name ?? null });
-      void start({ rect, format });
+      const back = backToBar.current;
+      backToBar.current = false;
+      // A recording brings the bar back itself; a screenshot or a failure may not.
+      void start({ rect, format }).then(() => {
+        if (back) void surface();
+      });
+    });
+    const unCancel = listen(REGION_CANCELLED, () => {
+      if (backToBar.current) void surface();
+      backToBar.current = false;
     });
     return () => {
       void un.then((f) => f());
+      void unCancel.then((f) => f());
     };
   }, [update, start]);
 
@@ -583,13 +632,13 @@ export default function App() {
           await invoke("move_file", { from: shot, to: out });
           kept = true;
           if (act === "open") await invoke("open_with", { path: out });
-          toast.success("Saved", {
-            action: { label: "Show file", onClick: () => void revealItemInDir(out).catch(() => {}) },
+          toast.success(t("Saved"), {
+            action: { label: t("Show file"), onClick: () => void revealItemInDir(out).catch(() => {}) },
           });
         }
       } catch (err) {
         await surface();
-        toast.error("Screenshot failed", { description: String(err) });
+        toast.error(t("Screenshot failed"), { description: String(err) });
       } finally {
         if (!kept) await remove(shot).catch(() => {});
       }
@@ -608,12 +657,12 @@ export default function App() {
       void openOverlay(format);
     };
     const entries: [string, LucideIcon, () => void][] = [
-      ["Screenshot", ImageIcon, snip("png")],
-      ["Video", VideoIcon, snip("mp4")],
+      [t("Screenshot"), ImageIcon, snip("png")],
+      [t("Video"), VideoIcon, snip("mp4")],
       ["GIF", FilmIcon, snip("gif")],
-      ["Open rbox", AppWindowIcon, () => void surface().then(() => getCurrentWindow().setFocus())],
+      [t("Open rbox"), AppWindowIcon, () => void surface().then(() => getCurrentWindow().setFocus())],
       [
-        "Quit rbox",
+        t("Quit rbox"),
         PowerIcon,
         async () => {
           if (recording.current) await stop();
@@ -631,7 +680,7 @@ export default function App() {
       const menu = await Menu.new({ items: [...items.slice(0, 3), separator, ...items.slice(3)] });
       await (await TrayIcon.getById("main"))?.setMenu(menu);
     })().catch(() => {});
-  }, [stop]);
+  }, [stop, ready, settings.language]);
 
   const toggle = useCallback(() => {
     if (status === "recording") void stop();
@@ -649,14 +698,15 @@ export default function App() {
   useEffect(() => {
     const un = getCurrentWindow().onCloseRequested(async (e) => {
       if (!recording.current) {
-        // X goes to the tray: Print Screen and the tray menu need rbox running.
-        // Quitting is the tray's "Quit rbox".
         e.preventDefault();
-        await getCurrentWindow().hide();
+        // By default X goes to the tray: Print Screen and the tray menu need
+        // rbox running. Quitting is then the tray's "Quit rbox".
+        if (loadSettings().closeToTray) await getCurrentWindow().hide();
+        else await invoke("quit");
         return;
       }
       e.preventDefault();
-      toast.info("Finishing the recording…");
+      toast.info(t("Finishing the recording…"));
       await stop();
       await getCurrentWindow().destroy();
     });
@@ -671,6 +721,8 @@ export default function App() {
   // monitorOfRect wants a real Rect, and the label below asked for it twice.
   const rectMonitor = rect ? (monitorOfRect(monitors, rect) ?? null) : null;
   const isPng = settings.format === "png";
+  /** The one-row bar instead of the panel. Recording has its own bar. */
+  const compact = settings.compact && view === "main" && status !== "recording";
 
   function selectMonitor(name: string | null) {
     const m = monitors.find((mm) => mm.name === name);
@@ -710,7 +762,7 @@ export default function App() {
       const gone = fields.audioDevices.filter((d) => !audioDevices.includes(d));
       if (gone.length > 0) {
         fields.audioDevices = fields.audioDevices.filter((d) => audioDevices.includes(d));
-        toast.warning(`${gone.length} audio device(s) unavailable`, {
+        toast.warning(t("{n} audio device(s) unavailable", { n: gone.length }), {
           description: gone.map(shortDeviceName).join(", "),
         });
       }
@@ -729,8 +781,8 @@ export default function App() {
     const mons = monitorsRef.current;
     const fitted = fitRectToMonitors(a.rect, mons);
     if (!fitted) {
-      toast.warning("Saved area is off screen", {
-        description: "Keeping the current selection.",
+      toast.warning(t("Saved area is off screen"), {
+        description: t("Keeping the current selection."),
       });
       return null;
     }
@@ -794,17 +846,22 @@ export default function App() {
 
   const micLabel =
     settings.audioDevices.length === 0
-      ? "No mic"
+      ? t("No mic")
       : settings.audioDevices.length === 1
         ? shortDeviceName(settings.audioDevices[0])
-        : `${settings.audioDevices.length} mics`;
+        : t("{n} mics", { n: settings.audioDevices.length });
 
   const outLabel = settings.outDir ?? defaultDir;
 
   return (
     <main
       ref={rootRef}
-      className={cn("flex flex-col bg-background text-foreground", status === "recording" && "w-fit")}
+      className={cn(
+        "flex flex-col bg-background text-foreground",
+        (status === "recording" || compact) && "w-fit",
+      )}
+      // Settings keep the panel's height, so the window does not jump.
+      style={view === "settings" ? { minHeight: panelHeight.current } : undefined}
     >
       {/* Same <main> either way: fit() observes this element, not its content.
           The splash is about the panel's height, so the window barely moves. */}
@@ -832,16 +889,68 @@ export default function App() {
             <Button
               variant="ghost"
               size="icon-lg"
-              aria-label="Back"
-              className="-ml-2 rounded-[10px] text-muted-foreground"
+              aria-label={t("Back")}
+              // 36 px to hit, 22 px in the row: the logo's slot on the main view,
+              // so the title starts at the same spot.
+              className="-mx-1.75 rounded-[10px] text-muted-foreground"
               onClick={() => setView("main")}
             >
               <ChevronLeftIcon className="size-4.5" />
             </Button>
             <h1 data-tauri-drag-region className="text-base font-semibold tracking-tight">
-              Settings
+              {t("Settings")}
             </h1>
             <PresetBanner active={settings.activePreset} />
+          </>
+        ) : compact ? (
+          <>
+            <img data-tauri-drag-region src={logo} alt="" className="size-5.5 rounded-md" />
+            <IconChips
+              items={COMPACT_FORMATS}
+              value={settings.format}
+              disabled={busy}
+              onChange={(format) => update({ format })}
+            />
+            <IconChips
+              items={AREA_MODES}
+              value={settings.drawArea}
+              disabled={busy}
+              onChange={(drawArea) => update({ drawArea })}
+            />
+            {!settings.drawArea && (
+            <Button
+              variant="ghost"
+              size="icon-lg"
+              aria-label={rect ? t("Change area") : t("Select area")}
+              className="relative rounded-[10px] text-muted-foreground"
+              disabled={busy}
+              onClick={() => {
+                setPreview(false);
+                void openOverlay();
+              }}
+            >
+              <CropIcon className="size-4.5" />
+              <Tip>{rect ? t("Change area") : t("Select area")}</Tip>
+            </Button>
+            )}
+            <Button
+              className="h-9 gap-2 rounded-[10px] px-3.5 text-sm font-semibold"
+              disabled={busy || (!settings.drawArea && !rect)}
+              onClick={() => {
+                if (!settings.drawArea) return toggle();
+                // Same quick overlay as Print Screen, but the bar comes back after.
+                backToBar.current = true;
+                setPreview(false);
+                void openOverlay(settings.format);
+              }}
+            >
+              {status === "processing" ? (
+                <LoaderIcon className="size-4 animate-spin" />
+              ) : (
+                <span className="size-2.5 rounded-full bg-destructive" />
+              )}
+              {isPng ? t("Capture") : t("Record")}
+            </Button>
           </>
         ) : (
           <>
@@ -875,7 +984,7 @@ export default function App() {
             edge — the bar is only as wide as those two. */}
         <div
           data-tauri-drag-region
-          className={cn("flex items-center gap-1", status !== "recording" && "ml-auto")}
+          className={cn("flex items-center", status !== "recording" && "ml-auto")}
         >
           {status === "recording" ? (
             <Button
@@ -883,33 +992,44 @@ export default function App() {
               onClick={toggle}
             >
               <span className="size-2.5 rounded-[3px] bg-white" />
-              Stop
+              {t("Stop")}
             </Button>
           ) : (
             <>
-              {/* Settings save on every change; this only says so. */}
-              {view === "settings" && (
-                <span className="flex items-center gap-1.25 pr-1.5 text-xs whitespace-nowrap text-muted-foreground/80">
-                  <CheckIcon className="size-3.25" />
-                  Saved
-                </span>
-              )}
-              {view === "main" && (
+              {view === "main" && !compact && (
                 <Button
                   variant="ghost"
-                  size="icon-lg"
-                  aria-label="Settings"
+                  size="icon"
+                  aria-label={t("Settings")}
                   disabled={busy}
                   className="rounded-[10px] text-muted-foreground"
-                  onClick={() => setView("settings")}
+                  onClick={() => {
+                    panelHeight.current = rootRef.current?.getBoundingClientRect().height ?? 0;
+                    setView("settings");
+                  }}
                 >
                   <SettingsIcon className="size-4.5" />
                 </Button>
               )}
+              {view === "main" && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={compact ? t("Full view") : t("Compact view")}
+                  className="relative rounded-[10px] text-muted-foreground"
+                  onClick={() => update({ compact: !settings.compact })}
+                >
+                  {compact ? <Maximize2Icon className="size-4.5" /> : <Minimize2Icon className="size-4.5" />}
+                  <Tip>{compact ? t("Full view") : t("Compact view")}</Tip>
+                </Button>
+              )}
+              {/* The compact bar stays on top; it leaves via Full view or the tray. */}
+              {!compact && (
+              <>
               <Button
                 variant="ghost"
-                size="icon-lg"
-                aria-label="Minimize"
+                size="icon"
+                aria-label={t("Minimize")}
                 className="rounded-[10px] text-muted-foreground"
                 onClick={() => void getCurrentWindow().minimize()}
               >
@@ -917,31 +1037,33 @@ export default function App() {
               </Button>
               <Button
                 variant="ghost"
-                size="icon-lg"
-                aria-label="Close"
+                size="icon"
+                aria-label={t("Close")}
                 className="rounded-[10px] text-muted-foreground hover:text-destructive"
                 onClick={() => void getCurrentWindow().close()}
               >
                 <XIcon className="size-4.5" />
               </Button>
+              </>
+              )}
             </>
           )}
         </div>
       </header>
 
-      {status === "recording" ? null : status === "processing" ? (
+      {status === "recording" || compact ? null : status === "processing" ? (
         <div className="flex items-center gap-4 px-4.5 pb-4.5">
-          <span className="flex size-14 items-center justify-center rounded-xl bg-card text-muted-foreground">
+          <span className="flex size-14 items-center justify-center rounded-xl bg-muted text-muted-foreground">
             <LoaderIcon className="size-5 animate-spin" />
           </span>
           <div className="flex flex-col gap-1">
-            <span className="text-base font-semibold">Converting to GIF…</span>
+            <span className="text-base font-semibold">{t("Converting to GIF…")}</span>
             <span className="text-[13.5px] text-muted-foreground">
               {settings.gifFps} fps · {gifSize(settings.gifWidth)}
             </span>
           </div>
           <span className="ml-auto text-[13.5px] text-muted-foreground">
-            Opens the folder when done
+            {t("Opens the folder when done")}
           </span>
         </div>
       ) : view === "settings" ? (
@@ -958,12 +1080,12 @@ export default function App() {
           {/* area ------------------------------------------------------- */}
           {/* The two actions sit on the size line — their labels live in the
               tooltip — so the display line below has the full width. */}
-          <div className="flex items-center gap-4 rounded-[14px] bg-card p-4">
+          <div className="flex items-center gap-4 rounded-[14px] bg-muted p-4">
             <AreaThumb rect={rect} monitor={rectMonitor} />
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               <div className="flex items-center gap-2">
                 <span className="text-[22px] font-semibold tracking-tight whitespace-nowrap tabular-nums">
-                  {rect ? `${rect.w} × ${rect.h}` : "No area selected"}
+                  {rect ? `${rect.w} × ${rect.h}` : t("No area selected")}
                 </span>
                 {/* 36 px keeps this line the height of the thumbnail. */}
                 <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -971,8 +1093,8 @@ export default function App() {
                     variant="ghost"
                     size="icon-lg"
                     aria-pressed={preview}
-                    aria-label={preview ? "Hide frame" : "Show frame"}
-                    className="group relative size-9 rounded-[10px] text-muted-foreground"
+                    aria-label={preview ? t("Hide frame") : t("Show frame")}
+                    className="relative size-9 rounded-[10px] text-muted-foreground"
                     disabled={busy || !rect}
                     onClick={() => setPreview((p) => !p)}
                   >
@@ -981,13 +1103,13 @@ export default function App() {
                     ) : (
                       <EyeIcon className="size-4.5" />
                     )}
-                    <Tip>{preview ? "Hide frame" : "Show frame"}</Tip>
+                    <Tip>{preview ? t("Hide frame") : t("Show frame")}</Tip>
                   </Button>
                   <Button
                     variant="ghost"
                     size="icon-lg"
-                    aria-label={rect ? "Change area" : "Select area"}
-                    className="group relative size-9 rounded-[10px] text-muted-foreground"
+                    aria-label={rect ? t("Change area") : t("Select area")}
+                    className="relative size-9 rounded-[10px] text-muted-foreground"
                     disabled={busy}
                     onClick={() => {
                       // The ring would otherwise sit on top of the overlay.
@@ -996,7 +1118,7 @@ export default function App() {
                     }}
                   >
                     <CropIcon className="size-4.5" />
-                    <Tip>{rect ? "Change area" : "Select area"}</Tip>
+                    <Tip>{rect ? t("Change area") : t("Select area")}</Tip>
                   </Button>
                 </div>
               </div>
@@ -1011,7 +1133,7 @@ export default function App() {
                     <SelectTrigger className="h-auto w-fit gap-1 rounded-md border-0 bg-transparent p-0 text-xs text-muted-foreground hover:text-foreground dark:bg-transparent dark:hover:bg-transparent">
                       <MonitorIcon className="size-3.5" />
                       <SelectValue
-                        placeholder={monitors.length === 1 ? displayName(monitors[0].name) : "Select monitor"}
+                        placeholder={monitors.length === 1 ? displayName(monitors[0].name) : t("Select monitor")}
                       >
                         {displayName}
                       </SelectValue>
@@ -1030,17 +1152,17 @@ export default function App() {
                   </Select>
                 )}
                 <span className="truncate font-mono">
-                  {rect ? `at ${rect.x}, ${rect.y}` : "No frame yet"}
+                  {rect ? t("at {x}, {y}", { x: rect.x, y: rect.y }) : t("No frame yet")}
                 </span>
               </div>
             </div>
           </div>
 
           {/* format ----------------------------------------------------- */}
-          <div className="flex gap-1 rounded-[14px] bg-foreground/6 p-1">
+          <div className="flex gap-1 rounded-[14px] bg-muted p-1">
             <FormatChip
               icon={<VideoIcon />}
-              label="Video"
+              label={t("Video")}
               active={settings.format === "mp4"}
               disabled={busy}
               onClick={() => update({ format: "mp4" })}
@@ -1062,20 +1184,20 @@ export default function App() {
           </div>
 
           {/* meta ------------------------------------------------------- */}
-          <div className="flex h-11 items-center gap-2.5 rounded-[10px] bg-foreground/3 px-3.5 text-[13px] text-muted-foreground">
+          <div className="flex h-11 items-center gap-2.5 rounded-[10px] bg-muted px-3.5 text-[13px] text-muted-foreground">
             <button
               type="button"
-              onClick={() => void openPath(outLabel).catch(() => toast.error("Folder does not exist yet"))}
-              className="group relative flex min-w-0 items-center gap-2.5 outline-none hover:text-foreground focus-visible:text-foreground"
+              onClick={() => void openPath(outLabel).catch(() => toast.error(t("Folder does not exist yet")))}
+              className="relative flex min-w-0 items-center gap-2.5 outline-none hover:text-foreground focus-visible:text-foreground"
             >
               <FolderIcon className="size-4 shrink-0" />
-              <span className="truncate">{outLabel}</span>
+              <Marquee>{outLabel}</Marquee>
               <Tip>{outLabel}</Tip>
             </button>
             <div className="ml-auto flex shrink-0 items-center gap-0.5">
               <MetaToggle
                 on={settings.systemAudio}
-                label={settings.systemAudio ? "System audio" : "No system audio"}
+                label={settings.systemAudio ? t("System audio") : t("No system audio")}
                 icon={settings.systemAudio ? <Volume2Icon /> : <VolumeOffIcon />}
                 disabled={busy || isPng}
                 onClick={() => update({ systemAudio: !settings.systemAudio })}
@@ -1097,7 +1219,7 @@ export default function App() {
             onClick={toggle}
           >
             <span className="size-3.5 rounded-full bg-destructive" />
-            {isPng ? "Take screenshot" : "Start recording"}
+            {isPng ? t("Take screenshot") : t("Start recording")}
           </Button>
 
           <Links appVersion={appVersion} updateUrl={updateUrl} />
@@ -1133,7 +1255,7 @@ function Links({
         <button
           type="button"
           onClick={() => void openUrl(REPO_URL)}
-          className="group relative flex min-w-0 items-center gap-2.5 rounded-[10px] outline-none hover:text-foreground focus-visible:text-foreground"
+          className="relative flex min-w-0 items-center gap-2.5 rounded-[10px] outline-none hover:text-foreground focus-visible:text-foreground"
         >
           <GithubMark className="size-4 shrink-0" />
           <span className="truncate">rbox{appVersion && ` · v${appVersion}`}</span>
@@ -1142,38 +1264,25 @@ function Links({
         {updateUrl && (
           <button
             type="button"
-            aria-label="Update available"
+            aria-label={t("Update available")}
             onClick={() => void openUrl(updateUrl)}
-            className="group relative flex shrink-0 items-center text-emerald-500 outline-none hover:text-emerald-400 focus-visible:text-emerald-400"
+            className="relative flex shrink-0 items-center text-emerald-500 outline-none hover:text-emerald-400 focus-visible:text-emerald-400"
           >
             <ArrowUpCircleIcon className="size-4" />
-            <Tip>Update available</Tip>
+            <Tip>{t("Update available")}</Tip>
           </button>
         )}
       </div>
       <button
         type="button"
         onClick={() => void openUrl(KOFI_URL)}
-        className="group relative flex shrink-0 items-center gap-2.5 rounded-[10px] outline-none hover:text-foreground focus-visible:text-foreground"
+        className="relative flex shrink-0 items-center gap-2.5 rounded-[10px] outline-none hover:text-foreground focus-visible:text-foreground"
       >
         <CoffeeIcon className="size-4" />
-        Buy me a coffee
+        {t("Buy me a coffee")}
         <Tip>Ko-fi</Tip>
       </button>
     </div>
-  );
-}
-
-/**
- * Hover label in the app's own style. Beats `title`: no second, delayed OS
- * tooltip, and it floats out of flow so no row changes width. Put it inside a
- * button carrying `group relative`.
- */
-function Tip({ children }: { children: string }) {
-  return (
-    <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 hidden -translate-x-1/2 rounded-md bg-popover px-2 py-1 text-xs whitespace-nowrap text-foreground shadow-md ring-1 ring-foreground/10 group-hover:block group-focus-visible:block">
-      {children}
-    </span>
   );
 }
 
@@ -1212,7 +1321,7 @@ function MetaToggle({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "group relative flex h-8 items-center rounded-lg px-2 outline-none transition-colors hover:text-foreground focus-visible:text-foreground disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-4 [&_svg]:shrink-0",
+        "relative flex h-8 items-center rounded-lg px-2 outline-none transition-colors hover:text-foreground focus-visible:text-foreground disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-4 [&_svg]:shrink-0",
         on ? "text-foreground" : "text-muted-foreground",
       )}
     >
@@ -1284,12 +1393,110 @@ function FormatChip({
   );
 }
 
-/** Small uppercase heading over a settings group. */
-function Group({ children }: { children: string }) {
+/** Icon-only segmented switch for the compact bar. */
+function IconChips<T extends string | boolean>({
+  items,
+  value,
+  disabled,
+  onChange,
+}: {
+  items: [T, string, LucideIcon][];
+  value: T;
+  disabled?: boolean;
+  onChange: (v: T) => void;
+}) {
   return (
-    <h2 className="text-[11px] font-semibold tracking-[0.08em] text-muted-foreground/80 uppercase">
+    <div className="flex gap-0.5 rounded-[10px] bg-muted p-0.5">
+      {items.map(([v, label, Icon]) => (
+        <button
+          key={String(v)}
+          type="button"
+          aria-label={t(label)}
+          aria-pressed={value === v}
+          disabled={disabled}
+          onClick={() => onChange(v)}
+          className={cn(
+            "relative flex size-8 items-center justify-center rounded-lg transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50 [&_svg]:size-4",
+            value === v ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Icon />
+          <Tip>{t(label)}</Tip>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * An info icon that opens `children` as a card below it. A click anywhere
+ * else or Esc closes it; the card itself stays clickable (links in it work).
+ */
+function Info({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!root.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  return (
+    // Not `relative`: the card hangs under the whole Field, as wide as it, so it
+    // never runs out of the narrow settings pane.
+    <div ref={root} className="flex">
+      <button
+        type="button"
+        aria-label={t("More info")}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          "rounded-full outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50",
+          open ? "text-foreground" : "text-muted-foreground/60",
+        )}
+      >
+        <InfoIcon className="size-3.5" />
+      </button>
+      {open && (
+        // data-popup: fit() grows the window should the card reach past it.
+        <div
+          data-popup
+          className="absolute top-full right-0 left-0 z-50 mt-2 flex flex-col gap-2.5 rounded-xl bg-popover p-3.5 text-xs leading-relaxed text-foreground/75 shadow-lg ring-1 ring-foreground/10"
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The way on at the bottom of an Info card, set apart from the explanation. */
+function InfoLink({
+  icon: Icon,
+  onClick,
+  children,
+}: {
+  icon: LucideIcon;
+  onClick: () => void;
+  children: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center gap-1.5 border-t pt-2.5 text-left font-medium text-foreground outline-none hover:underline focus-visible:underline"
+    >
+      <Icon className="size-3.5 shrink-0" />
       {children}
-    </h2>
+      <ArrowUpRightIcon className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
+    </button>
   );
 }
 
@@ -1306,10 +1513,10 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className={inline ? "flex items-center justify-between gap-3" : "flex flex-col gap-1.5"}>
-      <div className="flex min-w-0 flex-col gap-0.5">
+    <div className={cn("relative", inline ? "flex items-center justify-between gap-3" : "flex flex-col gap-1.5")}>
+      <div className="flex min-w-0 items-center gap-1.5">
         <span className="text-[13px] text-muted-foreground">{label}</span>
-        {sub && <span className="text-[11px] text-muted-foreground/70">{sub}</span>}
+        {sub && <Info>{sub}</Info>}
       </div>
       {children}
     </div>
@@ -1401,7 +1608,7 @@ function FpsPicker({
           <button
             type="button"
             disabled={disabled}
-            aria-label="Custom frame rate"
+            aria-label={t("Custom frame rate")}
             onClick={() => (custom === null || isCustom ? setEditing(true) : onChange(custom))}
             className={cn(
               SEGMENT,
@@ -1453,7 +1660,7 @@ function SettingsPanel({
       await (on ? enableAutostart() : disableAutostart());
       setAutostart(on);
     } catch (e) {
-      toast.error("Could not change autostart", { description: String(e) });
+      toast.error(t("Could not change autostart"), { description: String(e) });
     }
   }
 
@@ -1470,137 +1677,272 @@ function SettingsPanel({
     if (typeof picked === "string") update({ outDir: picked });
   }
 
-  return (
-    <>
-      <div className="grid grid-cols-2">
-        <div className="flex min-w-0 flex-col gap-3.5 border-r px-5 py-4.5">
-          <Group>Video</Group>
-          <Field label="Frame rate">
-            <FpsPicker
-              value={settings.fps}
-              choices={FPS_CHOICES}
-              max={120}
-              disabled={isPng}
-              onChange={(v) => update({ fps: v })}
-            />
-          </Field>
-          <Field label="Quality">
-            <Segmented
-              value={settings.quality}
-              disabled={isPng}
-              onChange={(v) => update({ quality: v as Settings["quality"] })}
-              options={Object.entries(QUALITY_LABELS).map(([value, label]) => ({
-                value: value as Settings["quality"],
-                label,
-              }))}
-            />
-          </Field>
+  // Read on every visit, so a file dropped into the folder shows up.
+  const [langs, setLangs] = useState<LangInfo[]>([]);
+  useEffect(() => {
+    void listLanguages().then(setLangs, () => {});
+  }, []);
+  const lang = langs.find((l) => l.id === settings.language);
+  const madeFor = lang && "version" in lang && lang.version && appVersion ? lang.version : null;
+  const langNote = !madeFor
+    ? t("Add your own as JSON files in the language folder.")
+    : isNewer(appVersion, madeFor)
+      ? t("Made for v{v}, some text may be untranslated.", { v: madeFor })
+      : isNewer(madeFor, appVersion)
+        ? t("Made for v{v}, update rbox.", { v: madeFor })
+        : t("Made for v{v}.", { v: madeFor });
 
-          <div className="my-1 h-px bg-border" />
-          <Group>GIF</Group>
-          <Field label="Frame rate">
-            {/* GIF frame delays are whole centiseconds; players clamp above 50. */}
-            <FpsPicker
-              value={settings.gifFps}
-              choices={[10, 15, 20, 25]}
-              max={50}
-              onChange={(v) => update({ gifFps: v })}
-            />
-          </Field>
-          <Field inline label="Width">
-            <Select
-              value={String(settings.gifWidth)}
-              onValueChange={(v) => v && update({ gifWidth: Number(v) })}
-            >
-              <SelectTrigger size="sm" className="font-mono text-xs">
-                <SelectValue>{(v: string) => gifSize(Number(v))}</SelectValue>
+  // Strings first, then the re-render that shows them.
+  async function pickLanguage(id: string | null) {
+    await loadLanguage(id);
+    update({ language: id });
+  }
+
+  // One section at a time; the first is open whenever the settings are.
+  const [section, setSection] = useState(0);
+  const sections: [string, LucideIcon, React.ReactNode][] = [
+    [
+      t("Recording"),
+      CropIcon,
+      <>
+        <Field label={t("Save to")} sub={t("Videos, GIFs and screenshots land here. Click to choose another folder.")}>
+          <button
+            type="button"
+            onClick={() => void pickFolder()}
+            className="relative flex h-8 min-w-0 items-center justify-between gap-2 rounded-lg border border-input px-2.5 font-mono text-xs text-foreground/75 transition-colors outline-none hover:bg-input/30 focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            <Marquee>{dirLabel}</Marquee>
+            <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <Tip>{t("Change folder")}</Tip>
+          </button>
+        </Field>
+        <Field label={t("Delay")} sub={t("Between confirming the area and capturing")}>
+          <Segmented
+            mono
+            value={settings.delay}
+            onChange={(v) => update({ delay: v })}
+            options={DELAY_CHOICES.map((d) => ({ value: d, label: d ? `${d} s` : t("Off") }))}
+          />
+        </Field>
+      </>,
+    ],
+    [
+      t("Video"),
+      VideoIcon,
+      <>
+        <Field label={t("Frame rate")} sub={t("Higher is smoother but makes bigger files. 30 fits most screen recordings.")}>
+          <FpsPicker
+            value={settings.fps}
+            choices={FPS_CHOICES}
+            max={120}
+            disabled={isPng}
+            onChange={(v) => update({ fps: v })}
+          />
+        </Field>
+        <Field label={t("Quality")} sub={t("Higher keeps more detail and makes bigger files.")}>
+          <Segmented
+            value={settings.quality}
+            disabled={isPng}
+            onChange={(v) => update({ quality: v as Settings["quality"] })}
+            options={Object.entries(QUALITY_LABELS).map(([value, label]) => ({
+              value: value as Settings["quality"],
+              label: t(label),
+            }))}
+          />
+        </Field>
+      </>,
+    ],
+    [
+      "GIF",
+      FilmIcon,
+      <>
+        <Field label={t("Frame rate")} sub={t("GIFs grow fast with every frame. 10 to 15 fps is enough for most.")}>
+          {/* GIF frame delays are whole centiseconds; players clamp above 50. */}
+          <FpsPicker
+            value={settings.gifFps}
+            choices={[10, 15, 20, 25]}
+            max={50}
+            onChange={(v) => update({ gifFps: v })}
+          />
+        </Field>
+        <Field inline label={t("Width")} sub={t("Wider areas are scaled down to this width, never up. Original keeps the area's size.")}>
+          <Select
+            value={String(settings.gifWidth)}
+            onValueChange={(v) => v && update({ gifWidth: Number(v) })}
+          >
+            <SelectTrigger className="w-44 font-mono text-xs">
+              <SelectValue>{(v: string) => gifSize(Number(v))}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {[320, 480, 640, 800, 1024, 0].map((w) => (
+                <SelectItem key={w} value={String(w)}>
+                  {gifSize(w)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+      </>,
+    ],
+    [
+      t("Screenshot"),
+      ImageIcon,
+      <Field inline label={t("Screenshots to clipboard")} sub={t("Copy screenshots directly to the clipboard instead of opening the screenshot menu. No file is saved.")}>
+        <Switch aria-label={t("Screenshots to clipboard")} checked={settings.screenshotToClipboard} onCheckedChange={(v) => update({ screenshotToClipboard: v })} />
+      </Field>,
+    ],
+    [
+      t("Audio"),
+      Volume2Icon,
+      <>
+        <Field inline label={t("System audio")} sub={t("Records what your PC plays: apps, videos, calls. No extra driver needed.")}>
+          <Switch
+            checked={settings.systemAudio}
+            onCheckedChange={(v) => update({ systemAudio: v })}
+            disabled={isPng}
+          />
+        </Field>
+        <Field inline label={t("Microphone")} sub={t("Pick one or more. All are recorded together with the system audio.")}>
+          <DeviceSelect
+            devices={audioDevices}
+            selected={settings.audioDevices}
+            onToggle={toggleDevice}
+            disabled={isPng}
+          />
+        </Field>
+      </>,
+    ],
+    [
+      t("System"),
+      MonitorIcon,
+      <>
+        <Field
+          inline
+          label={t("Print Screen key")}
+          sub={
+            // Switching on takes the key from the Snipping Tool (claim_print_screen).
+            // The link is the fallback should Windows not pick that up live.
+            <>
+              <span>
+                {t("The Print key opens the area selection, not the Snipping Tool. Snipping Tool still opens?")}
+              </span>
+              <InfoLink icon={SettingsIcon} onClick={() => void openUrl(PRINT_KEY_SETTINGS)}>
+                {t("Turn it off in Windows")}
+              </InfoLink>
+            </>
+          }
+        >
+          <Switch
+            checked={settings.printScreen}
+            onCheckedChange={(v) => {
+              if (v) {
+                void invoke("claim_print_screen").catch((e) =>
+                  toast.error(t("Could not take Print Screen from the Snipping Tool"), {
+                    description: String(e),
+                  }),
+                );
+              }
+              update({ printScreen: v });
+            }}
+          />
+        </Field>
+        <Field inline label={t("Start with Windows")} sub={t("Starts in the tray")}>
+          <Switch checked={autostart} onCheckedChange={(v) => void toggleAutostart(v)} />
+        </Field>
+        <Field inline label={t("Close to tray")} sub={t("The X button hides rbox in the tray, so Print Screen and the tray menu keep working. Quit it from the tray menu.")}>
+          <Switch checked={settings.closeToTray} onCheckedChange={(v) => update({ closeToTray: v })} />
+        </Field>
+      </>,
+    ],
+    [
+      t("Language"),
+      LanguagesIcon,
+      <>
+        <Field
+          label={t("Language")}
+          sub={
+            <>
+              <span>{langNote}</span>
+              <InfoLink icon={BookOpenIcon} onClick={() => void openUrl(LANG_DOCS_URL)}>
+                {t("How language files work")}
+              </InfoLink>
+            </>
+          }
+        >
+          <div className="flex items-center gap-2">
+            <Select value={settings.language ?? ""} onValueChange={(v) => void pickLanguage(v || null)}>
+              <SelectTrigger className="min-w-0 flex-1 text-[13px]">
+                <SelectValue>
+                  {(v: string) => {
+                    const l = langs.find((x) => x.id === v);
+                    return l && "name" in l ? (
+                      <>
+                        <Flag code={l.flag} />
+                        {l.name}
+                      </>
+                    ) : (
+                      <>
+                        <Flag code="GB" />
+                        English
+                      </>
+                    );
+                  }}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {[320, 480, 640, 800, 1024, 0].map((w) => (
-                  <SelectItem key={w} value={String(w)}>
-                    {gifSize(w)}
+                <SelectItem value="" className="gap-2">
+                  <Flag code="GB" />
+                  English
+                </SelectItem>
+                {langs.map((l) => (
+                  <SelectItem key={l.id} value={l.id} disabled={"error" in l} className="gap-2">
+                    <Flag code={"flag" in l ? l.flag : undefined} />
+                    {"name" in l ? l.name : t("{file} (invalid)", { file: `${l.id}.json` })}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </Field>
-        </div>
-
-        <div className="flex min-w-0 flex-col gap-3.5 px-5 py-4.5">
-          <Group>Audio</Group>
-          <Field inline label="System audio">
-            <Switch
-              checked={settings.systemAudio}
-              onCheckedChange={(v) => update({ systemAudio: v })}
-              disabled={isPng}
-            />
-          </Field>
-          <Field inline label="Microphone">
-            <DeviceSelect
-              devices={audioDevices}
-              selected={settings.audioDevices}
-              onToggle={toggleDevice}
-              disabled={isPng}
-            />
-          </Field>
-
-          <div className="my-1 h-px bg-border" />
-          <Group>System</Group>
-          <Field label="Save to">
-            <button
-              type="button"
-              title="Change folder"
-              onClick={() => void pickFolder()}
-              className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-input px-2.5 py-1.5 font-mono text-xs text-foreground/75 transition-colors outline-none hover:bg-input/30 focus-visible:ring-3 focus-visible:ring-ring/50"
+            <Button
+              variant="outline"
+              className="h-8 shrink-0 gap-1.5 text-[13px] text-muted-foreground"
+              onClick={() => void langDir().then(openPath).catch(() => {})}
             >
-              <span className="truncate">{dirLabel}</span>
-              <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" />
+              <FolderIcon className="size-3.5" />
+              {t("Open folder")}
+            </Button>
+          </div>
+        </Field>
+      </>,
+    ],
+  ];
+
+  return (
+    <>
+      <div className="flex flex-1">
+        <nav className="flex w-36 shrink-0 flex-col gap-0.5 border-r p-2">
+          {sections.map(([label, Icon], i) => (
+            <button
+              key={i}
+              type="button"
+              aria-pressed={i === section}
+              onClick={() => setSection(i)}
+              className={cn(
+                "flex h-9 items-center gap-2.5 rounded-lg px-3 text-left text-[13px] transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 [&_svg]:size-4 [&_svg]:shrink-0",
+                i === section
+                  ? "bg-foreground/8 font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
+              )}
+            >
+              <Icon />
+              {label}
             </button>
-          </Field>
-          <Field
-            inline
-            label="Print Screen key"
-            sub={
-              // Switching on takes the key from the Snipping Tool (claim_print_screen).
-              // The link is the fallback should Windows not pick that up live.
-              <>
-                The Print key opens the area selection, not the Snipping Tool. Snipping
-                Tool still opens?{" "}
-                <button
-                  type="button"
-                  onClick={() => void openUrl(PRINT_KEY_SETTINGS)}
-                  className="underline underline-offset-2 hover:text-foreground"
-                >
-                  Turn it off in Windows
-                </button>
-              </>
-            }
-          >
-            <Switch
-              checked={settings.printScreen}
-              onCheckedChange={(v) => {
-                if (v) {
-                  void invoke("claim_print_screen").catch((e) =>
-                    toast.error("Could not take Print Screen from the Snipping Tool", {
-                      description: String(e),
-                    }),
-                  );
-                }
-                update({ printScreen: v });
-              }}
-            />
-          </Field>
-          <Field inline label="Start with Windows" sub="Starts in the tray">
-            <Switch checked={autostart} onCheckedChange={(v) => void toggleAutostart(v)} />
-          </Field>
-          <Field label="Delay" sub="Between confirming the area and capturing">
-            <Segmented
-              mono
-              value={settings.delay}
-              onChange={(v) => update({ delay: v })}
-              options={DELAY_CHOICES.map((d) => ({ value: d, label: d ? `${d} s` : "Off" }))}
-            />
-          </Field>
+          ))}
+        </nav>
+        {/* Only the open section; the min-h above keeps the height steady. A
+            hidden-but-mounted section flickered: Tailwind's transitions animate
+            `visibility` too. Keyed, so no control animates across sections. */}
+        <div key={section} className="flex min-w-0 flex-1 flex-col gap-4 px-5 py-4.5">
+          {sections[section][2]}
         </div>
       </div>
 

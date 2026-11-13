@@ -115,6 +115,70 @@ fn tool_window(app: tauri::AppHandle, label: String) -> Result<(), String> {
     Ok(())
 }
 
+/// The visible app windows as [x, y, w, h] in physical pixels, topmost first,
+/// for the picker to snap to. DWM's frame bounds, not GetWindowRect: those
+/// include the invisible resize borders. Skipped: rbox itself (the overlay
+/// covers everything), minimized, cloaked (other virtual desktops, suspended
+/// UWP), tool and untitled windows, and the desktop.
+#[cfg(windows)]
+#[tauri::command]
+fn list_windows() -> Vec<[i32; 4]> {
+    type Hwnd = *mut std::ffi::c_void;
+    #[repr(C)]
+    #[derive(Default)]
+    struct Bounds {
+        l: i32,
+        t: i32,
+        r: i32,
+        b: i32,
+    }
+    unsafe extern "system" {
+        fn EnumWindows(cb: unsafe extern "system" fn(Hwnd, isize) -> i32, lp: isize) -> i32;
+        fn IsWindowVisible(h: Hwnd) -> i32;
+        fn IsIconic(h: Hwnd) -> i32;
+        fn GetShellWindow() -> Hwnd;
+        fn GetWindowThreadProcessId(h: Hwnd, pid: *mut u32) -> u32;
+        fn GetWindowLongPtrW(h: Hwnd, index: i32) -> isize;
+        fn GetWindowTextLengthW(h: Hwnd) -> i32;
+    }
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        fn DwmGetWindowAttribute(h: Hwnd, attr: u32, out: *mut std::ffi::c_void, size: u32) -> i32;
+    }
+    const GWL_EXSTYLE: i32 = -20;
+    const WS_EX_TOOLWINDOW: isize = 0x80;
+    const DWMWA_EXTENDED_FRAME_BOUNDS: u32 = 9;
+    const DWMWA_CLOAKED: u32 = 14;
+
+    // EnumWindows walks the z-order from the top.
+    unsafe extern "system" fn each(h: Hwnd, lp: isize) -> i32 {
+        let out = unsafe { &mut *(lp as *mut Vec<[i32; 4]>) };
+        let mut pid = 0u32;
+        let mut cloaked = 0u32;
+        let mut b = Bounds::default();
+        let keep = unsafe {
+            IsWindowVisible(h) != 0
+                && IsIconic(h) == 0
+                && h != GetShellWindow()
+                && GetWindowThreadProcessId(h, &mut pid) != 0
+                && pid != std::process::id()
+                && GetWindowLongPtrW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW == 0
+                && GetWindowTextLengthW(h) > 0
+                && DwmGetWindowAttribute(h, DWMWA_CLOAKED, (&mut cloaked as *mut u32).cast(), 4) == 0
+                && cloaked == 0
+                && DwmGetWindowAttribute(h, DWMWA_EXTENDED_FRAME_BOUNDS, (&mut b as *mut Bounds).cast(), 16) == 0
+        };
+        if keep && b.r > b.l && b.b > b.t {
+            out.push([b.l, b.t, b.r - b.l, b.b - b.t]);
+        }
+        1
+    }
+
+    let mut out: Vec<[i32; 4]> = Vec::new();
+    unsafe { EnumWindows(each, &mut out as *mut _ as isize) };
+    out
+}
+
 /// Windows 11 hands Print Screen to the Snipping Tool before any app hotkey
 /// sees it. This switches that Windows setting off, then tells the shell, as
 /// the toggle in Settings does. Async: the broadcast may wait on slow windows.
@@ -251,10 +315,19 @@ pub fn run() {
         .manage(loopback::Loopback::default());
 
     builder
+        // X only hides the panel; it is destroyed when closed mid-recording.
+        // Frame, overlay and tray would outlive it, so take them along.
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                use tauri::Manager;
+                window.app_handle().exit(0);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             free_space,
             screenshot,
             tool_window,
+            list_windows,
             claim_print_screen,
             copy_image,
             move_file,

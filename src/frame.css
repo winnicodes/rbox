@@ -1,0 +1,85 @@
+/* No framework here on purpose: this window is a red ring and nothing
+   else. The ring is drawn in the margin OUTSIDE the recorded region, so
+   gdigrab never captures it. */
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+.ring {
+  position: fixed;
+  inset: 0;
+  box-sizing: border-box;
+  border: 3px solid #ef4444;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    border-color: #ef4444;
+  }
+  50% {
+    border-color: #fca5a5;
+  }
+}
+/* Countdown before a delayed capture, in the middle of the region. */
+.msg {
+  display: none;
+}
+.msg span {
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgb(24 24 27 / 0.9);
+  color: #fafafa;
+  font: 600 14px system-ui, sans-serif;
+  white-space: nowrap;
+}
+/* Confirmation after a menu pick: the window is sized to the pill. */
+.confirm .msg {
+  display: block;
+}
+.confirm .msg span {
+  display: inline-block;
+}
+.counting .msg {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.msg .count {
+  min-width: 1.4em;
+  text-align: center;
+  font-size: 40px;
+  font-variant-numeric: tabular-nums;
+}
+/* Tooltip window (?tip): the same pill as <Tip>, sized to the text. */
+.tip .msg {
+  display: block;
+}
+.tip .msg span {
+  position: fixed;
+  left: 50%;
+  top: 0;
+  translate: -50% 0;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 288px;
+  padding: 3px 8px;
+  border: 1px solid oklch(0.985 0 0 / 0.1);
+  border-radius: 8px;
+  background: oklch(0.205 0 0);
+  color: oklch(0.985 0 0);
+  /* 500, not the inline tip's 400: a transparent window gets no
+     ClearType, and thin text there reads grey. */
+  font: 500 12px/16px "Geist Variable", system-ui, sans-serif;
+  white-space: normal;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ring {
+    animation: none;
+  }
+}

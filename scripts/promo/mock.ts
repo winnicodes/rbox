@@ -31,7 +31,7 @@ export function installMocks(label: string) {
       const a = args as Record<string, unknown> | undefined;
       switch (cmd) {
         case "plugin:app|version":
-          return "0.2.0";
+          return "0.3.0";
         case "plugin:path|resolve_directory":
           return "C:\\Users\\you\\Videos";
         case "plugin:path|join":
@@ -63,6 +63,16 @@ export function installMocks(label: string) {
           return [1, "menu"];
         case "free_space":
           return 500e9;
+        case "list_windows":
+          // The stand-in app window of overlay.html, in the same percentages.
+          return [
+            [
+              Math.round(innerWidth * 0.3125),
+              Math.round(innerHeight * 0.305),
+              Math.round(innerWidth * 0.375),
+              Math.round(innerHeight * 0.37),
+            ],
+          ];
         case "system_audio_start":
           return { port: 5000, format: "f32le", sampleRate: 48000, channels: 2 };
         default:

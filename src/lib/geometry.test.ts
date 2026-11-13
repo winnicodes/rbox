@@ -11,6 +11,7 @@ import {
   rectFromPoints,
   startupRect,
   virtualBounds,
+  windowAt,
   type MonitorInfo,
 } from "./geometry.ts";
 
@@ -172,4 +173,17 @@ test("barPosition: below the frame, above at the screen bottom, inside when full
   assert.deepEqual(barPosition({ x: 0, y: 0, w: 1920, h: 1080 }, mon, bar, 10), { x: 0, y: 1014 });
   // Kept on the monitor horizontally.
   assert.equal(barPosition({ x: 1800, y: 100, w: 100, h: 100 }, mon, bar, 10).x, 1620);
+});
+
+test("windowAt picks the topmost window and clips it to the clicked monitor", () => {
+  const front = { x: 100, y: 100, w: 400, h: 300 };
+  const back = { x: 0, y: 0, w: 1000, h: 800 };
+  // Hangs off the primary's left edge into the left monitor.
+  const straddling = { x: -200, y: 500, w: 600, h: 200 };
+  const wins = [front, back];
+  assert.deepEqual(windowAt(wins, monitors, 150, 150), front);
+  assert.deepEqual(windowAt(wins, monitors, 900, 700), back);
+  assert.equal(windowAt(wins, monitors, 1500, 900), null);
+  assert.deepEqual(windowAt([straddling], monitors, 50, 550), { x: 0, y: 500, w: 400, h: 200 });
+  assert.deepEqual(windowAt([straddling], monitors, -50, 550), { x: -200, y: 500, w: 200, h: 200 });
 });

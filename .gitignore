@@ -13,6 +13,7 @@ dist-ssr
 *.local
 
 # Personal scratch notes, not part of the project
+/AGENTS.md
 /ToDo
 /ROADMAP.md
 

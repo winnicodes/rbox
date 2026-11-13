@@ -22,6 +22,16 @@ export type Settings = {
   printScreen: boolean;
   /** Seconds to wait between confirming the area and capturing. App-wide. */
   delay: number;
+  /** Language file id (see i18n.ts); null = English. App-wide. */
+  language: string | null;
+  /** Main window as a one-row bar. App-wide. */
+  compact: boolean;
+  /** Compact bar: Record draws a new area instead of using the saved one. App-wide. */
+  drawArea: boolean;
+  /** X hides to the tray instead of quitting. App-wide. */
+  closeToTray: boolean;
+  /** Copy screenshots directly instead of opening the menu. App-wide. */
+  screenshotToClipboard: boolean;
   presets: Preset[];
   /** Name of the selected preset, or null. */
   activePreset: string | null;
@@ -73,6 +83,11 @@ export const DEFAULTS: Settings = {
   gifWidth: 640,
   printScreen: false,
   delay: 0,
+  language: null,
+  compact: false,
+  drawArea: false,
+  closeToTray: true,
+  screenshotToClipboard: false,
   presets: [],
   activePreset: null,
 };

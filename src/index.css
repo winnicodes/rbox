@@ -94,7 +94,9 @@
     --primary-foreground: oklch(0.205 0 0);
     --secondary: oklch(0.269 0 0);
     --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
+    /* Between --card (0.205) and the shadcn default 0.269: tracks and panels
+       still stand out from the background in the one-row bar. */
+    --muted: oklch(0.235 0 0);
     --muted-foreground: oklch(0.708 0 0);
     --accent: oklch(0.269 0 0);
     --accent-foreground: oklch(0.985 0 0);
@@ -138,4 +140,24 @@
        behind. */
     overflow: hidden;
     }
+}
+
+/* Marquee.tsx: hold, travel to the end, hold, jump back. */
+@keyframes marquee {
+  0%,
+  15% {
+    translate: 0;
+  }
+  85%,
+  100% {
+    translate: var(--shift);
+  }
+}
+.marquee {
+  animation: marquee linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .marquee {
+    animation: none;
+  }
 }

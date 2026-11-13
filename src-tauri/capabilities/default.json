@@ -5,7 +5,8 @@
   "windows": [
     "main",
     "shotbar",
-    "overlay"
+    "overlay",
+    "tip"
   ],
   "permissions": [
     "core:default",
@@ -43,6 +44,12 @@
     "fs:allow-video-read-recursive",
     "fs:allow-temp-write-recursive",
     "fs:allow-temp-read-recursive",
+    "fs:allow-read-text-file",
+    "fs:allow-read-dir",
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "$DATA/rbox/**" }]
+    },
     {
       "identifier": "shell:allow-execute",
       "allow": [

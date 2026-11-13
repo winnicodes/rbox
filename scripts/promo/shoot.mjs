@@ -26,11 +26,14 @@ export default async function run(page) {
   await page.goto(`${BASE}promo.html?n=2`);
   await page.waitForSelector("[data-win=settings] button[aria-label=Settings]");
   await page.click("[data-win=settings] button[aria-label=Settings]");
+  await page.click("[data-win=compact] button[aria-label='Compact view']");
   await page.click('[data-win=rec] button:has-text("Start recording")');
   // Clicks scroll the fixed-size page; put it back.
   await page.evaluate(() => document.querySelectorAll("*").forEach((el) => (el.scrollTop = 0)));
   // Let the timer run to a believable 00:12.
   await page.waitForSelector('[data-win=rec] :text("00:12")', { timeout: 20_000 });
+  // No hover label in the shot.
+  await page.mouse.move(0, 0);
   await page.screenshot({ path: `${OUT}/rbox-promo-2.png` });
 
   await page.goto(`${BASE}promo.html?n=3`);

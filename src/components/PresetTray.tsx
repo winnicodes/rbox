@@ -15,6 +15,8 @@ import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import type { Preset } from "@/lib/settings";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
+import Tip from "@/components/Tip";
 
 type Props = {
   presets: Preset[];
@@ -37,7 +39,7 @@ export function PresetBanner({ active }: { active: string | null }) {
   return (
     <div className="flex h-7 max-w-42.5 min-w-0 items-center gap-1.5 rounded-lg border border-border px-2 text-xs text-muted-foreground">
       <BookmarkIcon className="size-3.5 shrink-0" />
-      <span className="truncate">{active ?? "No preset"}</span>
+      <span className="truncate">{active ?? t("No preset")}</span>
     </div>
   );
 }
@@ -144,15 +146,15 @@ export default function PresetTray({
             ) : (
               <button
                 type="button"
-                title={p.name}
                 onClick={() => {
                   close();
                   onSelect(on ? null : p.name);
                 }}
-                className="flex min-w-0 flex-1 flex-col gap-0.5 text-left outline-none"
+                className="relative flex min-w-0 flex-1 flex-col gap-0.5 text-left outline-none"
               >
                 <span className="truncate text-[15px] font-medium">{p.name}</span>
                 <span className="truncate text-[13px] text-muted-foreground">{summary(p)}</span>
+                <Tip>{p.name}</Tip>
               </button>
             )}
 
@@ -160,7 +162,7 @@ export default function PresetTray({
               <Button
                 variant="ghost"
                 size="icon-lg"
-                aria-label={`Actions for ${p.name}`}
+                aria-label={t("Actions for {name}", { name: p.name })}
                 aria-expanded={menuOpen}
                 className="size-11 rounded-[10px] text-muted-foreground"
                 onClick={() => setMenuFor(menuOpen ? null : p.name)}
@@ -181,7 +183,7 @@ export default function PresetTray({
                     className="flex h-11 w-full items-center gap-2.5 rounded-lg px-3 text-left text-sm outline-none hover:bg-accent"
                   >
                     <PencilIcon className="size-4 shrink-0" />
-                    Rename
+                    {t("Rename")}
                   </button>
                   <button
                     type="button"
@@ -192,7 +194,7 @@ export default function PresetTray({
                     className="flex h-11 w-full items-center gap-2.5 rounded-lg px-3 text-left text-sm outline-none hover:bg-accent"
                   >
                     <CropIcon className="size-4 shrink-0" />
-                    {p.area ? "Forget area" : "Remember area"}
+                    {p.area ? t("Forget area") : t("Remember area")}
                   </button>
                   <button
                     type="button"
@@ -203,7 +205,7 @@ export default function PresetTray({
                     className="flex h-11 w-full items-center gap-2.5 rounded-lg px-3 text-left text-sm text-destructive outline-none hover:bg-destructive/15"
                   >
                     <Trash2Icon className="size-4 shrink-0" />
-                    Delete
+                    {t("Delete")}
                   </button>
                 </div>
               )}
@@ -223,7 +225,7 @@ export default function PresetTray({
         className="flex h-13 items-center gap-3 rounded-[10px] px-3 text-left text-[15px] font-medium text-muted-foreground outline-none hover:bg-accent hover:text-foreground"
       >
         <PlusIcon className="size-4.5 shrink-0" />
-        Save current settings as preset
+        {t("Save current settings as preset")}
       </button>
     </>
   );
@@ -237,7 +239,7 @@ export default function PresetTray({
         <input
           autoFocus
           value={naming}
-          placeholder="Preset name"
+          placeholder={t("Preset name")}
           spellCheck={false}
           onChange={(e) => setNaming(e.currentTarget.value)}
           onBlur={() => setNaming(null)}
@@ -247,7 +249,7 @@ export default function PresetTray({
       ) : (
         <button
           type="button"
-          aria-label="Presets"
+          aria-label={t("Presets")}
           aria-expanded={open}
           onClick={() => (open ? close() : setOpen(true))}
           className={cn(
@@ -256,7 +258,7 @@ export default function PresetTray({
           )}
         >
           <BookmarkIcon className="size-3.5 shrink-0" />
-          <span className="truncate">{active ?? "No preset"}</span>
+          <span className="truncate">{active ?? t("No preset")}</span>
           {open ? (
             <ChevronUpIcon className="size-3.5 shrink-0" />
           ) : (

@@ -4,99 +4,12 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <title>rbox recording frame</title>
-    <style>
-      /* No framework here on purpose: this window is a red ring and nothing
-         else. The ring is drawn in the margin OUTSIDE the recorded region, so
-         gdigrab never captures it. */
-      html,
-      body {
-        margin: 0;
-        height: 100%;
-        background: transparent;
-        overflow: hidden;
-      }
-      .ring {
-        position: fixed;
-        inset: 0;
-        box-sizing: border-box;
-        border: 3px solid #ef4444;
-        animation: pulse 1.6s ease-in-out infinite;
-      }
-      @keyframes pulse {
-        0%,
-        100% {
-          border-color: #ef4444;
-        }
-        50% {
-          border-color: #fca5a5;
-        }
-      }
-      /* Countdown before a delayed capture, in the middle of the region. */
-      .msg {
-        display: none;
-      }
-      .msg span {
-        padding: 8px 14px;
-        border-radius: 10px;
-        background: rgb(24 24 27 / 0.9);
-        color: #fafafa;
-        font: 600 14px system-ui, sans-serif;
-        white-space: nowrap;
-      }
-      /* Confirmation after a menu pick: the window is sized to the pill. */
-      .confirm .msg {
-        display: block;
-      }
-      .confirm .msg span {
-        display: inline-block;
-      }
-      .counting .msg {
-        position: fixed;
-        inset: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      .msg .count {
-        min-width: 1.4em;
-        text-align: center;
-        font-size: 40px;
-        font-variant-numeric: tabular-nums;
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .ring {
-          animation: none;
-        }
-      }
-    </style>
+    <link rel="stylesheet" href="/src/frame.css" />
   </head>
 
   <body>
     <div class="ring"></div>
     <div class="msg"><span id="msg"></span></div>
-    <script type="module">
-      const params = new URLSearchParams(location.search);
-
-      // Countdown before a delayed capture, ticking down to 1.
-      let count = Number(params.get("count"));
-      if (count > 0) {
-        const el = document.getElementById("msg");
-        el.classList.add("count");
-        el.textContent = count;
-        document.body.classList.add("counting");
-        const id = setInterval(() => {
-          if (--count > 0) el.textContent = count;
-          else clearInterval(id);
-        }, 1000);
-      }
-
-      // Pick mode (?pick): an invisible 1 px window that only opens the native
-      // menu after a screenshot. Loaded on demand so the ring stays light.
-      if (params.has("pick")) {
-        document.querySelector(".ring").remove();
-        const { popShotMenu } = await import("./src/lib/shotMenu.ts");
-        await popShotMenu();
-      }
-    </script>
+    <script type="module" src="/src/frame.ts"></script>
   </body>
 </html>

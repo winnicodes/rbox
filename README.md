@@ -23,16 +23,19 @@ or a whole display. You pick the area once, correct it to the pixel, and record
 it as often as you like. It also replaces the Snipping Tool: press Print, drag,
 done.
 
-- **Exact region.** Drag it, or type the numbers. The size fields sit right on
-  the edge of the selection, so you never lose sight of what you are framing.
+- **Exact region.** Drag it, click a window to take exactly its frame, or type
+  the numbers. The size fields sit right on the edge of the selection, so you
+  never lose sight of what you are framing.
 - **Three formats.** MP4 (H.264), animated GIF, or a PNG screenshot.
 - **Print Screen and tray.** Print opens the area picker with Screenshot, Video
   or GIF - rbox takes the key over from the Snipping Tool. The tray menu offers
   the same. rbox keeps running in the tray.
 - **Screenshot menu.** After a screenshot a menu opens at the pointer: copy to
-  clipboard, save, save to, save and open with.
+  clipboard, save, save to, save and open with. Enable **Settings → Screenshot →
+  Screenshots to clipboard** to copy directly and skip the menu.
 - **Delay.** 3, 5 or 10 seconds between confirming and capturing, with a
-  countdown in the frame - time to open a menu.
+  countdown in the frame - time to open a menu. It sits under **Settings →
+  Recording**, next to the output folder.
 - **System sound, no drivers.** Records what your machine is playing. No Stereo
   Mix, no VB-Cable, nothing to install.
 - **Microphones.** Pick one, several, or none. They are mixed into the recording.
@@ -44,6 +47,9 @@ done.
   ends up in the file.
 - **Stays out of the way.** While recording, the panel shrinks to a small bar
   on top of everything - and it is never part of the video.
+- **Compact bar.** One click turns the panel into a one-row bar that stays on
+  top, like the Snipping Tool's.
+- **Your language.** English and German built in; add more with a JSON file.
 
 Everything is saved to `Videos\rbox` by default (or the folder you pick), named
 by timestamp.
@@ -51,21 +57,34 @@ by timestamp.
 ## ✂️ Picking a region
 
 <div align="center">
-  <img src="docs/media/demo.gif" alt="Dragging a region open, with the size updating as it grows" width="820">
+  <img src="docs/media/demo.gif" alt="Dragging a frame open around a window, then taking the same window with one click, and switching to video" width="820">
 </div>
 
-Drag anywhere. The size counts up while you pull, and the toolbar that follows
-lets you snap to 1080p, 720p or square, go full screen, or type exact numbers.
-A size preset keeps the frame's top-left corner and only changes its size.
+Drag anywhere - the size counts up while you pull. Or click a window: the one
+under the pointer is outlined, and a click takes exactly its visible position
+and size. The toolbar that follows lets you snap to 1080p, 720p or square, go
+full screen, or type exact numbers. A size preset keeps the frame's top-left
+corner and only changes its size.
+
+## 🪟 Compact bar
+
+<div align="center">
+  <img src="docs/media/compact.gif" alt="The panel shrinking to a one-row bar and back" width="820">
+</div>
+
+The button next to the settings shrinks the panel to a bar that stays on top:
+format, area and record, nothing else. Its area switch decides whether
+**Record** lets you draw a new area every time or uses the saved one. The
+button on its right brings the panel back; rbox remembers which one you used.
 
 ## 🖼️ Screenshots
 
 <div align="center">
-  <img src="docs/media/rbox-promo-2.png" alt="The whole app: the main panel, the settings page, and the bar the panel shrinks to while recording." width="900">
+  <img src="docs/media/rbox-promo-2.png" alt="The whole app: the main panel, the recording bar, the settings page, the compact bar, and the tray and screenshot menus." width="900">
 </div>
 
-That is the entire app. One panel, one settings page, a small bar while it
-records, and a tray icon.
+That is the entire app. One panel (or its compact bar), one settings page, a
+small bar while it records, and a tray icon.
 
 <a id="install"></a>
 
@@ -83,8 +102,9 @@ Choose **More info → Run anyway**, or build it yourself from source.
 
 ## ▶️ Usage
 
-1. Click the crop button (**Select area**) and drag a rectangle. Correct it with
-   the number fields on its edge, or pick a size preset (1080p, 720p, square).
+1. Click the crop button (**Select area**) and drag a rectangle, or click a
+   window. Correct it with the number fields on its edge, or pick a size preset
+   (1080p, 720p, square).
 2. Choose the format: **Video**, **GIF** or **PNG**.
 3. Turn system sound and microphones on or off.
 4. Hit record. The panel becomes a small bar with a timer.
@@ -116,13 +136,15 @@ Choose **More info → Run anyway**, or build it yourself from source.
 
 Right-click the tray icon for **Screenshot**, **Video** or **GIF** - the same
 picker, that format preselected. The X button sends rbox to the tray; quit it
-from the tray menu. **Start with Windows** starts it straight into the tray.
+from the tray menu, or switch off **Close to tray** to make X quit. **Start with
+Windows** starts it straight into the tray.
 
 ### While picking a region
 
 | Key | Action |
 | --- | --- |
 | Drag | Draw a new region |
+| Click a window | Take its exact frame |
 | Drag inside / corners | Move or resize it |
 | Arrow keys | Nudge by 1 px |
 | Shift + arrows | Nudge by 10 px |
@@ -139,8 +161,11 @@ from the tray menu. **Start with Windows** starts it straight into the tray.
   behind.
 - If another app already holds the Print key, rbox says so and turns the
   **Print Screen key** switch back off. If the Snipping Tool still opens, the
-  link under the switch leads to the Windows setting.
+  info icon next to the switch links to the Windows setting.
 - Videos in your browser keep playing while you pick a region.
+- Add a language by dropping a JSON file into the folder behind **Settings →
+  Language → Open folder** - see [docs/translations.md](docs/translations.md).
+- Long folder paths scroll by instead of being cut off.
 
 <a id="build-from-source"></a>
 
@@ -182,11 +207,16 @@ The short version:
   ffmpeg over a local TCP socket. That is why no virtual audio device has to be
   installed.
 - **GIF** is encoded from a scratch MP4 in two passes, palette first.
+- **Clicking a window** takes its DWM frame bounds (no invisible resize
+  borders), listed once with `EnumWindows` when the picker opens.
 - **Screenshots** go to a temp file first; the menu decides whether it is
-  copied, moved or discarded.
+  copied, moved or discarded. Direct clipboard mode copies and deletes it
+  without opening the menu.
 - **The recording bar** is excluded from capture with
   `WDA_EXCLUDEFROMCAPTURE`, so it can sit on top of the region.
 - **Settings** live in `localStorage`. There is no settings backend.
+- **Translations** are JSON files keyed by the English text; a missing string
+  stays English.
 
 The full explanation - architecture, the coordinate rule, the audio pacing, the
 build pipeline and the traps - is in the **[Developer guide](docs/dev.md)**.
